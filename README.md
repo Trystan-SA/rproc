@@ -12,7 +12,7 @@ Built in Rust with [`egui`](https://github.com/emilk/egui).
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](#license)
 ![Platform: Linux](https://img.shields.io/badge/platform-Linux-informational)
 
-<img src="example1.png" alt="Performance view" width="900">
+<img src="img/capture1.png" alt="Performance view" width="900">
 
 </div>
 
@@ -60,8 +60,8 @@ cargo run --release
 - **Settings** — adjustable refresh rate.
 
 <div align="center">
-  <img src="example2.png" alt="Processes tab" width="450">
-  <img src="example3.png" alt="Services tab" width="450">
+  <img src="./img/capture2.png" alt="Processes tab" width="450">
+  <img src="./img/capture3.png" alt="Startup apps" width="450">
 </div>
 
 ## Requirements
