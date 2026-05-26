@@ -344,12 +344,7 @@ fn parse_pmu_event_config(s: &str) -> Option<u64> {
 
 /// Parses a Linux cpumask like "0", "0-3", or "0,4" and returns the first CPU.
 fn parse_first_cpu(s: &str) -> Option<u32> {
-    s.trim()
-        .split(&['-', ','][..])
-        .next()?
-        .trim()
-        .parse()
-        .ok()
+    s.trim().split(&['-', ','][..]).next()?.trim().parse().ok()
 }
 
 #[cfg(test)]

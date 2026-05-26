@@ -278,15 +278,7 @@ fn card_button_pct(
         format!("{value:.0}%")
     };
     let resp = card_button_inner(
-        ui,
-        id,
-        title,
-        subtitle,
-        &label,
-        history,
-        100.0,
-        color,
-        selected,
+        ui, id, title, subtitle, &label, history, 100.0, color, selected,
     );
     if resp.clicked() {
         *current = section;
