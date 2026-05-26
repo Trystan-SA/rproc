@@ -147,6 +147,10 @@ jobs:
 
   release:
     needs: [build-binary, build-deb, build-rpm, build-flatpak]
+    # Publish whatever built. The binary is required; the .deb / .rpm /
+    # .flatpak jobs are best-effort, so a single failure (e.g. flatpak)
+    # never blocks the release of the others.
+    if: ${{ always() && needs.build-binary.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
@@ -163,4 +167,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
+          fail_on_unmatched_files: false
           generate_release_notes: true
