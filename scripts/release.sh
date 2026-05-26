@@ -19,12 +19,23 @@ if ! command -v cargo-set-version >/dev/null 2>&1; then
 fi
 
 CURRENT=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+
+# Strip any pre-release / build suffix so we can compute numeric bumps.
+CORE=${CURRENT%%-*}
+CORE=${CORE%%+*}
+IFS=. read -r MAJ MIN PAT <<<"$CORE"
+MAJ=${MAJ:-0}; MIN=${MIN:-0}; PAT=${PAT:-0}
+
+PATCH_NEXT="${MAJ}.${MIN}.$((PAT + 1))"
+MINOR_NEXT="${MAJ}.$((MIN + 1)).0"
+MAJOR_NEXT="$((MAJ + 1)).0.0"
+
 echo "current version: ${CURRENT}"
 echo
 echo "Select bump:"
-echo "  1) patch  (${CURRENT} -> bug fix)"
-echo "  2) minor  (${CURRENT} -> new feature)"
-echo "  3) major  (${CURRENT} -> breaking change)"
+echo "  1) patch  ${CURRENT} -> ${PATCH_NEXT}   (bug fix)"
+echo "  2) minor  ${CURRENT} -> ${MINOR_NEXT}   (new feature)"
+echo "  3) major  ${CURRENT} -> ${MAJOR_NEXT}   (breaking change)"
 echo
 
 BUMP=""
