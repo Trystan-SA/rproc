@@ -1,0 +1,12 @@
+[Unit]
+Description=rproc background sampler
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/rproc --daemon
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,38 @@
+app-id: io.github.trystan-sa.rproc
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: rproc
+
+finish-args:
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+  - --filesystem=host:ro
+  - --talk-name=org.freedesktop.systemd1
+  - --system-talk-name=org.freedesktop.systemd1
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/rproc/cargo
+
+modules:
+  - name: rproc
+    buildsystem: simple
+    build-commands:
+      - cargo --offline build --release --verbose
+      - install -Dm755 target/release/rproc /app/bin/rproc
+      - install -Dm644 packaging/io.github.trystan-sa.rproc.desktop
+          /app/share/applications/io.github.trystan-sa.rproc.desktop
+      - install -Dm644 packaging/io.github.trystan-sa.rproc.metainfo.xml
+          /app/share/metainfo/io.github.trystan-sa.rproc.metainfo.xml
+      - install -Dm644 packaging/icons/hicolor/scalable/apps/io.github.trystan-sa.rproc.svg
+          /app/share/icons/hicolor/scalable/apps/io.github.trystan-sa.rproc.svg
+    sources:
+      - type: dir
+        path: ../..
+      - cargo-sources.json

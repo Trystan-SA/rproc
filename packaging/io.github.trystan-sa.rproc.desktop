@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=rproc
+GenericName=System Monitor
+Comment=Resource and process monitor for Linux
+Exec=rproc
+Icon=io.github.trystan-sa.rproc
+Terminal=false
+Categories=System;Monitor;
+Keywords=process;monitor;cpu;memory;system;task;
+StartupNotify=true
+StartupWMClass=rproc

@@ -21,3 +21,35 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 strip = true
+
+[package.metadata.deb]
+maintainer = "Trystan Sarrade <trystan.sarrade@somanyways.co>"
+section = "utils"
+priority = "optional"
+depends = "$auto"
+extended-description = """\
+rproc is a resource and process monitor for Linux, inspired by the
+Windows 11 Task Manager. It shows live CPU, memory, disk, network and
+GPU usage along with the full process tree, services and startup
+entries."""
+assets = [
+    ["target/release/rproc", "usr/bin/", "755"],
+    ["packaging/io.github.trystan-sa.rproc.desktop", "usr/share/applications/", "644"],
+    ["packaging/io.github.trystan-sa.rproc.metainfo.xml", "usr/share/metainfo/", "644"],
+    ["packaging/icons/hicolor/scalable/apps/io.github.trystan-sa.rproc.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
+    ["packaging/rprocd.system.service", "usr/lib/systemd/user/rprocd.service", "644"],
+    ["README.md", "usr/share/doc/rproc/README.md", "644"],
+]
+
+[package.metadata.generate-rpm]
+license = "MIT"
+summary = "Resource and process monitor for Linux"
+assets = [
+    { source = "target/release/rproc", dest = "/usr/bin/rproc", mode = "755" },
+    { source = "packaging/io.github.trystan-sa.rproc.desktop", dest = "/usr/share/applications/io.github.trystan-sa.rproc.desktop", mode = "644" },
+    { source = "packaging/io.github.trystan-sa.rproc.metainfo.xml", dest = "/usr/share/metainfo/io.github.trystan-sa.rproc.metainfo.xml", mode = "644" },
+    { source = "packaging/icons/hicolor/scalable/apps/io.github.trystan-sa.rproc.svg", dest = "/usr/share/icons/hicolor/scalable/apps/io.github.trystan-sa.rproc.svg", mode = "644" },
+    { source = "packaging/rprocd.system.service", dest = "/usr/lib/systemd/user/rprocd.service", mode = "644" },
+    { source = "README.md", dest = "/usr/share/doc/rproc/README.md", mode = "644", doc = true },
+]
+auto-req = "auto"

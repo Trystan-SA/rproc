@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  build-binary:
     runs-on: ubuntu-latest
     container: ubuntu:20.04
     env:
@@ -36,7 +36,7 @@ jobs:
       - name: Build
         run: cargo build --release --locked
 
-      - name: Package
+      - name: Package tarball
         run: |
           mkdir -p dist
           cp target/release/rproc dist/
@@ -44,21 +44,120 @@ jobs:
           tar czf rproc-${GITHUB_REF_NAME}-linux-x86_64.tar.gz rproc
           sha256sum rproc-${GITHUB_REF_NAME}-linux-x86_64.tar.gz > rproc-${GITHUB_REF_NAME}-linux-x86_64.tar.gz.sha256
 
-      - name: Upload artifact
+      - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: rproc-linux-x86_64
+          name: rproc-binary
+          path: target/release/rproc
+          retention-days: 1
+
+      - name: Upload tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: rproc-tarball
           path: dist/*
 
-  release:
-    needs: build
+  build-deb:
+    needs: build-binary
     runs-on: ubuntu-latest
     steps:
-      - name: Download artifact
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-deb
+        run: cargo install cargo-deb --locked
+
+      - name: Download prebuilt binary
         uses: actions/download-artifact@v4
         with:
-          name: rproc-linux-x86_64
+          name: rproc-binary
+          path: target/release
+
+      - name: Restore binary permissions
+        run: chmod +x target/release/rproc
+
+      - name: Build .deb
+        run: cargo deb --no-build --no-strip --output dist/
+
+      - name: Upload .deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: rproc-deb
+          path: dist/*.deb
+
+  build-rpm:
+    needs: build-binary
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-generate-rpm
+        run: cargo install cargo-generate-rpm --locked
+
+      - name: Download prebuilt binary
+        uses: actions/download-artifact@v4
+        with:
+          name: rproc-binary
+          path: target/release
+
+      - name: Restore binary permissions and strip
+        run: |
+          chmod +x target/release/rproc
+          strip target/release/rproc || true
+
+      - name: Build .rpm
+        run: cargo generate-rpm --output dist/
+
+      - name: Upload .rpm
+        uses: actions/upload-artifact@v4
+        with:
+          name: rproc-rpm
+          path: dist/*.rpm
+
+  build-flatpak:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-24.08
+      options: --privileged
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate cargo-sources.json
+        run: |
+          curl -L -o /tmp/flatpak-cargo-generator.py \
+            https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
+          python3 -m pip install --break-system-packages aiohttp toml
+          python3 /tmp/flatpak-cargo-generator.py Cargo.lock \
+            -o packaging/flatpak/cargo-sources.json
+
+      - name: Build Flatpak bundle
+        uses: flathub-infra/flatpak-github-actions/flatpak-builder@master
+        with:
+          bundle: rproc-${{ github.ref_name }}-x86_64.flatpak
+          manifest-path: packaging/flatpak/io.github.trystan-sa.rproc.yml
+          cache-key: flatpak-builder-${{ github.sha }}
+
+  release:
+    needs: [build-binary, build-deb, build-rpm, build-flatpak]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
           path: dist
+          pattern: rproc-*
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la dist/
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2

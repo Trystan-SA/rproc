@@ -28,11 +28,61 @@ Built in Rust with [`egui`](https://github.com/emilk/egui).
 - `systemctl` for the Services and Startup tabs
 - NVIDIA driver for NVIDIA GPU metrics (optional)
 
-## Build & run
+## Install
+
+Prebuilt packages for each release are published on the
+[Releases page](https://github.com/Trystan-SA/rproc/releases).
+
+### Debian / Ubuntu (`.deb`)
+
+```bash
+sudo dpkg -i rproc_<version>_amd64.deb
+sudo apt-get install -f  # pulls in any missing deps
+```
+
+### Fedora / RHEL / openSUSE (`.rpm`)
+
+```bash
+sudo dnf install ./rproc-<version>-1.x86_64.rpm
+# or: sudo rpm -i rproc-<version>-1.x86_64.rpm
+```
+
+### Flatpak
+
+```bash
+flatpak install --user rproc-<version>-x86_64.flatpak
+flatpak run io.github.trystan-sa.rproc
+```
+
+### From source
 
 ```bash
 cargo run --release
 ```
+
+## Packaging
+
+Single-command targets via the included `Makefile`:
+
+```bash
+make flatpak           # build a local .flatpak bundle
+make flatpak-install   # build + install for the current user
+make deb               # build a .deb (target/debian/)
+make rpm               # build an .rpm (target/generate-rpm/)
+```
+
+## Release
+
+To cut a new release, run:
+
+```bash
+make release
+```
+
+You'll be prompted for the bump (patch / minor / major). The script bumps
+the version, tags `vX.Y.Z`, and pushes — GitHub Actions then builds the
+binary, `.deb`, `.rpm` and `.flatpak` and publishes them on the
+[Releases page](https://github.com/Trystan-SA/rproc/releases).
 
 ## Background sampling
 
