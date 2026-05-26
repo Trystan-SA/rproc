@@ -272,12 +272,17 @@ fn card_button_pct(
     current: &mut Section,
 ) {
     let selected = *current == section;
+    let label = if value.is_nan() {
+        "N/A".to_string()
+    } else {
+        format!("{value:.0}%")
+    };
     let resp = card_button_inner(
         ui,
         id,
         title,
         subtitle,
-        &format!("{value:.0}%"),
+        &label,
         history,
         100.0,
         color,
@@ -603,6 +608,45 @@ fn panel_network(ui: &mut egui::Ui, snap: &Snapshot, idx: usize) {
     });
 }
 
+fn gpu_util_unavailable_banner(ui: &mut egui::Ui, vendor: &str) {
+    // Tinted card with a yellow border-ish fill so it reads as a warning
+    // without screaming. Same shape as widgets::card so it lines up.
+    let bg = egui::Color32::from_rgba_unmultiplied(0xFF, 0xC4, 0x4D, 28);
+    egui::Frame::new()
+        .fill(bg)
+        .inner_margin(egui::Margin::same(12))
+        .corner_radius(egui::CornerRadius::same(8))
+        .show(ui, |ui| {
+            ui.label(
+                egui::RichText::new("GPU utilization unavailable")
+                    .color(theme::WARN)
+                    .strong(),
+            );
+            ui.add_space(4.0);
+            let detail = if vendor.eq_ignore_ascii_case("Intel") {
+                "rproc could not open the Intel i915/xe perf PMU. The kernel requires \
+                 CAP_PERFMON, or kernel.perf_event_paranoid ≤ 2, to read GPU engine counters."
+            } else {
+                "rproc could not read this GPU's utilization counter. The kernel requires \
+                 elevated permissions to access the perf PMU."
+            };
+            ui.label(egui::RichText::new(detail).color(theme::TEXT_DIM));
+            ui.add_space(8.0);
+            ui.label(egui::RichText::new("Fix (pick one):").color(theme::TEXT_DIM));
+            ui.add_space(2.0);
+            ui.label(
+                egui::RichText::new("  sudo setcap cap_perfmon=ep $(which rproc)")
+                    .monospace()
+                    .color(theme::TEXT),
+            );
+            ui.label(
+                egui::RichText::new("  sudo sysctl kernel.perf_event_paranoid=2")
+                    .monospace()
+                    .color(theme::TEXT),
+            );
+        });
+}
+
 fn panel_gpu(ui: &mut egui::Ui, snap: &Snapshot, idx: usize) {
     let Some(g) = snap.gpus.get(idx) else {
         ui.label("No GPU");
@@ -613,6 +657,11 @@ fn panel_gpu(ui: &mut egui::Ui, snap: &Snapshot, idx: usize) {
         egui::RichText::new(format!("{} · driver {}", g.vendor, g.driver)).color(theme::TEXT_DIM),
     );
     ui.add_space(8.0);
+
+    if g.util_pct.is_nan() {
+        gpu_util_unavailable_banner(ui, &g.vendor);
+        ui.add_space(8.0);
+    }
 
     widgets::card(ui, |ui| {
         ui.label("Utilization (last 60s)");
@@ -631,7 +680,12 @@ fn panel_gpu(ui: &mut egui::Ui, snap: &Snapshot, idx: usize) {
             snap.sample_interval_ms,
         );
         ui.add_space(8.0);
-        widgets::stat(ui, "Utilization", &format!("{:.0}%", g.util_pct));
+        let util_label = if g.util_pct.is_nan() {
+            "N/A".to_string()
+        } else {
+            format!("{:.0}%", g.util_pct)
+        };
+        widgets::stat(ui, "Utilization", &util_label);
         if g.mem_total > 0 {
             widgets::stat(
                 ui,

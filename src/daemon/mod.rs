@@ -40,7 +40,7 @@ pub fn run() -> anyhow::Result<()> {
     let mut sys = System::new_all();
     let mut nets = Networks::new_with_refreshed_list();
     let mut disks = Disks::new_with_refreshed_list();
-    let gpu_collector = gpu::GpuCollector::init();
+    let mut gpu_collector = gpu::GpuCollector::init();
 
     // sysinfo CPU usage needs two refreshes spaced apart to compute deltas.
     sys.refresh_cpu_usage();

@@ -86,7 +86,7 @@ fn sampler_loop(out: Arc<Mutex<Arc<Snapshot>>>, refresh_ms: Arc<AtomicU64>) {
     let mut nets = Networks::new_with_refreshed_list();
     let mut disks = Disks::new_with_refreshed_list();
     let mut users = Users::new_with_refreshed_list();
-    let gpu_collector = gpu::GpuCollector::init();
+    let mut gpu_collector = gpu::GpuCollector::init();
 
     // Start from whatever's been published (the prefill from disk) so we
     // don't drop the history we just loaded. After this point the working
