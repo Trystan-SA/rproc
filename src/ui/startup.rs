@@ -143,11 +143,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut State) {
     if let Some(idx) = open_properties_idx {
         state.properties_idx = Some(idx);
     }
-    render_startup_properties_window(
-        ui.ctx(),
-        &mut state.properties_idx,
-        &state.entries,
-    );
+    render_startup_properties_window(ui.ctx(), &mut state.properties_idx, &state.entries);
 
     for (idx, enabled) in to_toggle {
         let entry = state.entries[idx].clone();
@@ -341,11 +337,7 @@ fn render_startup_properties_window(
             if !e.comment.is_empty() {
                 widgets::stat(ui, "Description", &e.comment);
             }
-            widgets::stat(
-                ui,
-                "Boot time",
-                &format_boot_time(e.boot_time_ms),
-            );
+            widgets::stat(ui, "Boot time", &format_boot_time(e.boot_time_ms));
             widgets::stat(
                 ui,
                 "State",
@@ -410,9 +402,7 @@ fn render_startup_properties_window(
                     }
                     ui.add_space(4.0);
                 }
-                if !props.working_directory.is_empty()
-                    && props.working_directory != "[not set]"
-                {
+                if !props.working_directory.is_empty() && props.working_directory != "[not set]" {
                     widgets::path_field(
                         ui,
                         "Working directory",

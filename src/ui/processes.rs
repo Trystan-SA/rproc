@@ -49,7 +49,9 @@ impl SortKey {
 }
 
 fn sort_prefs_path() -> Option<PathBuf> {
-    storage::cache_dir().ok().map(|d| d.join("processes_sort.txt"))
+    storage::cache_dir()
+        .ok()
+        .map(|d| d.join("processes_sort.txt"))
 }
 
 fn load_sort_prefs() -> Option<(SortKey, bool)> {
@@ -417,9 +419,11 @@ fn render_group_header(
         let arrow_resp = arrow_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
         draw_icon(ui, icon_uri.as_deref());
         ui.add(
-            egui::Label::new(egui::RichText::new(format!("{}  ({})", g.name, g.procs.len())).strong())
-                .truncate()
-                .selectable(false),
+            egui::Label::new(
+                egui::RichText::new(format!("{}  ({})", g.name, g.procs.len())).strong(),
+            )
+            .truncate()
+            .selectable(false),
         );
         if arrow_resp.clicked() {
             *toggle = Some(g.name.clone());
@@ -667,10 +671,7 @@ fn proc_context_menu(
         ui.close();
     }
     if ui
-        .add_enabled(
-            !p.cmd.is_empty(),
-            egui::Button::new("Copy command line"),
-        )
+        .add_enabled(!p.cmd.is_empty(), egui::Button::new("Copy command line"))
         .clicked()
     {
         ui.ctx().copy_text(p.cmd.clone());
@@ -683,12 +684,7 @@ fn proc_context_menu(
     }
 }
 
-
-fn group_context_menu(
-    ui: &mut egui::Ui,
-    g: &Group<'_>,
-    open_properties_pid: &mut Option<u32>,
-) {
+fn group_context_menu(ui: &mut egui::Ui, g: &Group<'_>, open_properties_pid: &mut Option<u32>) {
     ui.set_min_width(220.0);
     let n = g.procs.len();
     // Lowest PID ≈ the parent/oldest in the group — use it as the "main"

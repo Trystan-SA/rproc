@@ -128,10 +128,7 @@ pub fn show_properties(name: &str, scope: &ServiceScope) -> ServiceProperties {
             "FragmentPath" => out.fragment_path = v,
             "DropInPaths" => {
                 // Space-separated list of paths.
-                out.drop_in_paths = v
-                    .split_whitespace()
-                    .map(str::to_string)
-                    .collect();
+                out.drop_in_paths = v.split_whitespace().map(str::to_string).collect();
             }
             "ExecStart" => out.exec_start = v,
             "MainPID" => out.main_pid = v,

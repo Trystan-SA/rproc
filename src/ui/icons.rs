@@ -225,15 +225,7 @@ fn find_icon_file(name: &str) -> Option<PathBuf> {
     // hicolor entries (16/22) tend to be bitmap-only and look muddy when
     // upscaled.
     let sizes = [
-        "48x48",
-        "64x64",
-        "128x128",
-        "256x256",
-        "32x32",
-        "24x24",
-        "22x22",
-        "16x16",
-        "scalable",
+        "48x48", "64x64", "128x128", "256x256", "32x32", "24x24", "22x22", "16x16", "scalable",
     ];
     let categories = ["apps", "devices", "places", "categories"];
     for theme_base in icon_theme_bases() {

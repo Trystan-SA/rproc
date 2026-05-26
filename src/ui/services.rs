@@ -221,7 +221,11 @@ fn render_service_properties_window(
 
     let mut open = true;
     egui::Window::new(format!("Properties: {name}"))
-        .id(egui::Id::new(("svc_properties", name.clone(), scope_str(&scope))))
+        .id(egui::Id::new((
+            "svc_properties",
+            name.clone(),
+            scope_str(&scope),
+        )))
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
@@ -278,9 +282,7 @@ fn render_service_properties_window(
                 }
                 ui.add_space(4.0);
             }
-            if !props.working_directory.is_empty()
-                && props.working_directory != "[not set]"
-            {
+            if !props.working_directory.is_empty() && props.working_directory != "[not set]" {
                 widgets::path_field(
                     ui,
                     "Working directory",
