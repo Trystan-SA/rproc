@@ -44,25 +44,29 @@ pub struct History {
 }
 
 pub struct Sampler {
-    inner: Arc<Mutex<Snapshot>>,
+    // Published snapshot. We wrap a Mutex around `Arc<Snapshot>` instead of
+    // `Snapshot` so the UI thread only clones the Arc pointer per frame (cheap)
+    // rather than every `ProcInfo`/`History` field (~hundreds of allocations).
+    // The sampler thread builds its working copy locally and only takes the
+    // mutex briefly at the end of each tick to swap the published Arc.
+    inner: Arc<Mutex<Arc<Snapshot>>>,
 }
 
 impl Sampler {
     pub fn start(refresh_ms: Arc<AtomicU64>) -> Self {
-        let inner = Arc::new(Mutex::new(Snapshot::default()));
-
         // Pre-fill the rolling history from the daemon's on-disk ring-buffer
         // so the user sees up to the last 60 s of activity as soon as the
         // window opens — even if rproc was just relaunched. CPU per-core
         // is the one detail series we don't persist (8–16× the storage
         // cost for little user value); it stays empty until the GUI samples.
+        let mut initial = Snapshot::default();
         if let Ok(path) = crate::daemon::storage::history_path()
             && let Ok(samples) = crate::daemon::storage::RingBuffer::read_all(&path)
             && !samples.is_empty()
         {
-            let mut snap = inner.lock().unwrap();
-            prefill_history(&mut snap.history, &samples);
+            prefill_history(&mut initial.history, &samples);
         }
+        let inner = Arc::new(Mutex::new(Arc::new(initial)));
 
         let inner_t = inner.clone();
         thread::Builder::new()
@@ -72,24 +76,25 @@ impl Sampler {
         Self { inner }
     }
 
-    pub fn snapshot(&self) -> Snapshot {
+    pub fn snapshot(&self) -> Arc<Snapshot> {
         self.inner.lock().unwrap().clone()
     }
 }
 
-fn sampler_loop(out: Arc<Mutex<Snapshot>>, refresh_ms: Arc<AtomicU64>) {
+fn sampler_loop(out: Arc<Mutex<Arc<Snapshot>>>, refresh_ms: Arc<AtomicU64>) {
     let mut sys = System::new_all();
     let mut nets = Networks::new_with_refreshed_list();
     let mut disks = Disks::new_with_refreshed_list();
     let mut users = Users::new_with_refreshed_list();
     let gpu_collector = gpu::GpuCollector::init();
 
-    {
-        let mut snap = out.lock().unwrap();
-        snap.history.per_core_cpu = (0..sys.cpus().len())
-            .map(|_| VecDeque::with_capacity(HISTORY_LEN))
-            .collect();
-    }
+    // Start from whatever's been published (the prefill from disk) so we
+    // don't drop the history we just loaded. After this point the working
+    // copy is owned exclusively by this thread — no lock needed to mutate.
+    let mut working: Snapshot = (**out.lock().unwrap()).clone();
+    working.history.per_core_cpu = (0..sys.cpus().len())
+        .map(|_| VecDeque::with_capacity(HISTORY_LEN))
+        .collect();
 
     // sysinfo CPU usage requires two refreshes spaced apart to compute deltas.
     sys.refresh_cpu_usage();
@@ -126,103 +131,112 @@ fn sampler_loop(out: Arc<Mutex<Snapshot>>, refresh_ms: Arc<AtomicU64>) {
         let procs = processes::collect(&sys, &users);
         let gpus = gpu_collector.sample();
 
-        {
-            let mut snap = out.lock().unwrap();
-            push_capped(&mut snap.history.cpu_total, summary.cpu_total, HISTORY_LEN);
-            if snap.history.per_core_cpu.len() != summary.per_core.len() {
-                snap.history.per_core_cpu = (0..summary.per_core.len())
-                    .map(|_| VecDeque::with_capacity(HISTORY_LEN))
-                    .collect();
-            }
-            for (i, c) in summary.per_core.iter().enumerate() {
-                if let Some(q) = snap.history.per_core_cpu.get_mut(i) {
-                    push_capped(q, *c, HISTORY_LEN);
-                }
-            }
-            push_capped(
-                &mut snap.history.ram_used_pct,
-                summary.ram_used_pct,
-                HISTORY_LEN,
-            );
-            let mut net_present: HashSet<String> = HashSet::with_capacity(summary.nets.len());
-            for n in &summary.nets {
-                net_present.insert(n.name.clone());
-                let r = snap
-                    .history
-                    .net_rx_bps
-                    .entry(n.name.clone())
-                    .or_insert_with(|| VecDeque::with_capacity(HISTORY_LEN));
-                push_capped(r, n.rx_bps, HISTORY_LEN);
-                let w = snap
-                    .history
-                    .net_tx_bps
-                    .entry(n.name.clone())
-                    .or_insert_with(|| VecDeque::with_capacity(HISTORY_LEN));
-                push_capped(w, n.tx_bps, HISTORY_LEN);
-            }
-            snap.history
-                .net_rx_bps
-                .retain(|k, _| net_present.contains(k));
-            snap.history
-                .net_tx_bps
-                .retain(|k, _| net_present.contains(k));
-
-            let mut present: HashSet<String> = HashSet::with_capacity(summary.disks.len());
-            for d in &summary.disks {
-                present.insert(d.name.clone());
-                let r = snap
-                    .history
-                    .disk_read_bps
-                    .entry(d.name.clone())
-                    .or_insert_with(|| VecDeque::with_capacity(HISTORY_LEN));
-                push_capped(r, d.read_bps, HISTORY_LEN);
-                let w = snap
-                    .history
-                    .disk_write_bps
-                    .entry(d.name.clone())
-                    .or_insert_with(|| VecDeque::with_capacity(HISTORY_LEN));
-                push_capped(w, d.write_bps, HISTORY_LEN);
-            }
-            snap.history
-                .disk_read_bps
-                .retain(|k, _| present.contains(k));
-            snap.history
-                .disk_write_bps
-                .retain(|k, _| present.contains(k));
-
-            if snap.history.gpu_util.len() != gpus.len() {
-                snap.history.gpu_util = (0..gpus.len())
-                    .map(|_| VecDeque::with_capacity(HISTORY_LEN))
-                    .collect();
-                snap.history.gpu_mem_pct = (0..gpus.len())
-                    .map(|_| VecDeque::with_capacity(HISTORY_LEN))
-                    .collect();
-            }
-            for (i, g) in gpus.iter().enumerate() {
-                if let Some(q) = snap.history.gpu_util.get_mut(i) {
-                    push_capped(q, g.util_pct, HISTORY_LEN);
-                }
-                let mem_pct = if g.mem_total > 0 {
-                    (g.mem_used as f32 / g.mem_total as f32) * 100.0
-                } else {
-                    0.0
-                };
-                if let Some(q) = snap.history.gpu_mem_pct.get_mut(i) {
-                    push_capped(q, mem_pct, HISTORY_LEN);
-                }
-            }
-
-            snap.system = summary;
-            snap.processes = procs;
-            snap.gpus = gpus;
-            snap.ready = true;
-            // Surface the *current* sampling period so plot widgets can label
-            // their X axis correctly. Read before the sleep so it reflects the
-            // interval just used to space these samples.
-            snap.sample_interval_ms = refresh_ms
-                .load(Ordering::Relaxed)
-                .clamp(MIN_REFRESH_MS, MAX_REFRESH_MS);
+        push_capped(
+            &mut working.history.cpu_total,
+            summary.cpu_total,
+            HISTORY_LEN,
+        );
+        if working.history.per_core_cpu.len() != summary.per_core.len() {
+            working.history.per_core_cpu = (0..summary.per_core.len())
+                .map(|_| VecDeque::with_capacity(HISTORY_LEN))
+                .collect();
         }
+        for (i, c) in summary.per_core.iter().enumerate() {
+            if let Some(q) = working.history.per_core_cpu.get_mut(i) {
+                push_capped(q, *c, HISTORY_LEN);
+            }
+        }
+        push_capped(
+            &mut working.history.ram_used_pct,
+            summary.ram_used_pct,
+            HISTORY_LEN,
+        );
+        let mut net_present: HashSet<String> = HashSet::with_capacity(summary.nets.len());
+        for n in &summary.nets {
+            net_present.insert(n.name.clone());
+            let r = working
+                .history
+                .net_rx_bps
+                .entry(n.name.clone())
+                .or_insert_with(|| VecDeque::with_capacity(HISTORY_LEN));
+            push_capped(r, n.rx_bps, HISTORY_LEN);
+            let w = working
+                .history
+                .net_tx_bps
+                .entry(n.name.clone())
+                .or_insert_with(|| VecDeque::with_capacity(HISTORY_LEN));
+            push_capped(w, n.tx_bps, HISTORY_LEN);
+        }
+        working
+            .history
+            .net_rx_bps
+            .retain(|k, _| net_present.contains(k));
+        working
+            .history
+            .net_tx_bps
+            .retain(|k, _| net_present.contains(k));
+
+        let mut present: HashSet<String> = HashSet::with_capacity(summary.disks.len());
+        for d in &summary.disks {
+            present.insert(d.name.clone());
+            let r = working
+                .history
+                .disk_read_bps
+                .entry(d.name.clone())
+                .or_insert_with(|| VecDeque::with_capacity(HISTORY_LEN));
+            push_capped(r, d.read_bps, HISTORY_LEN);
+            let w = working
+                .history
+                .disk_write_bps
+                .entry(d.name.clone())
+                .or_insert_with(|| VecDeque::with_capacity(HISTORY_LEN));
+            push_capped(w, d.write_bps, HISTORY_LEN);
+        }
+        working
+            .history
+            .disk_read_bps
+            .retain(|k, _| present.contains(k));
+        working
+            .history
+            .disk_write_bps
+            .retain(|k, _| present.contains(k));
+
+        if working.history.gpu_util.len() != gpus.len() {
+            working.history.gpu_util = (0..gpus.len())
+                .map(|_| VecDeque::with_capacity(HISTORY_LEN))
+                .collect();
+            working.history.gpu_mem_pct = (0..gpus.len())
+                .map(|_| VecDeque::with_capacity(HISTORY_LEN))
+                .collect();
+        }
+        for (i, g) in gpus.iter().enumerate() {
+            if let Some(q) = working.history.gpu_util.get_mut(i) {
+                push_capped(q, g.util_pct, HISTORY_LEN);
+            }
+            let mem_pct = if g.mem_total > 0 {
+                (g.mem_used as f32 / g.mem_total as f32) * 100.0
+            } else {
+                0.0
+            };
+            if let Some(q) = working.history.gpu_mem_pct.get_mut(i) {
+                push_capped(q, mem_pct, HISTORY_LEN);
+            }
+        }
+
+        working.system = summary;
+        working.processes = procs;
+        working.gpus = gpus;
+        working.ready = true;
+        // Surface the *current* sampling period so plot widgets can label
+        // their X axis correctly. Read before the sleep so it reflects the
+        // interval just used to space these samples.
+        working.sample_interval_ms = refresh_ms
+            .load(Ordering::Relaxed)
+            .clamp(MIN_REFRESH_MS, MAX_REFRESH_MS);
+
+        // Publish: one Snapshot clone per tick (≈1 Hz at default settings)
+        // instead of one per UI frame.
+        *out.lock().unwrap() = Arc::new(working.clone());
 
         let elapsed = now.elapsed();
         let target = Duration::from_millis(

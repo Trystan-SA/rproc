@@ -80,6 +80,16 @@ fn save_sort_prefs(sort: SortKey, descending: bool) {
     }
 }
 
+/// Heavy lookups behind the Properties modal — each one walks `/proc` and
+/// performs a fistful of syscalls. Computed when the modal opens, then
+/// re-used until the user clicks Reload or opens a different PID.
+pub struct ProcessPropertiesView {
+    pub pid: u32,
+    pub cwd: Option<String>,
+    pub fd_count: Option<usize>,
+    pub configs: Vec<PathBuf>,
+}
+
 pub struct State {
     sort: SortKey,
     descending: bool,
@@ -88,7 +98,7 @@ pub struct State {
     expanded: HashSet<String>,
     filter: String,
     icons: icons::Resolver,
-    properties_pid: Option<u32>,
+    properties: Option<ProcessPropertiesView>,
 }
 
 impl State {
@@ -102,7 +112,7 @@ impl State {
             expanded: HashSet::new(),
             filter: String::new(),
             icons: icons::Resolver::new(),
-            properties_pid: None,
+            properties: None,
         }
     }
 }
@@ -114,7 +124,7 @@ impl Default for State {
 }
 
 struct Group<'a> {
-    name: String,
+    name: &'a str,
     procs: Vec<&'a monitor::processes::ProcInfo>,
     cpu_pct: f32,
     mem_bytes: u64,
@@ -142,7 +152,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut State, snap: &Snapshot) {
                     let _ = monitor::processes::terminate(pid);
                     state.selected_pid = None;
                 }
-            } else if let Some(name) = state.selected_group.clone() {
+            } else if let Some(name) = state.selected_group.as_deref() {
                 let pids: Vec<u32> = snap
                     .processes
                     .iter()
@@ -150,13 +160,14 @@ pub fn show(ui: &mut egui::Ui, state: &mut State, snap: &Snapshot) {
                     .map(|p| p.pid)
                     .collect();
                 let n = pids.len();
-                if ui.button(format!("Force kill ({n})")).clicked() {
+                let force = ui.button(format!("Force kill ({n})")).clicked();
+                let end = ui.button(format!("End task ({n})")).clicked();
+                if force {
                     for pid in &pids {
                         let _ = monitor::processes::force_kill(*pid);
                     }
                     state.selected_group = None;
-                }
-                if ui.button(format!("End task ({n})")).clicked() {
+                } else if end {
                     for pid in &pids {
                         let _ = monitor::processes::terminate(*pid);
                     }
@@ -188,11 +199,12 @@ pub fn show(ui: &mut egui::Ui, state: &mut State, snap: &Snapshot) {
     // Group processes by name. Singletons render as a regular row; groups with
     // multiple processes show a triangle + "(N)" count and aggregate values on
     // the header line. Expanding reveals the individual processes, sorted by
-    // the same key.
-    let mut by_name: BTreeMap<String, Vec<&monitor::processes::ProcInfo>> = BTreeMap::new();
+    // the same key. Keying on `&str` (borrowed from `snap.processes`) skips
+    // ~N `String` allocations per frame, where N is the number of processes.
+    let mut by_name: BTreeMap<&str, Vec<&monitor::processes::ProcInfo>> = BTreeMap::new();
     for p in &snap.processes {
         if matches(p) {
-            by_name.entry(p.name.clone()).or_default().push(p);
+            by_name.entry(p.name.as_str()).or_default().push(p);
         }
     }
 
@@ -225,7 +237,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut State, snap: &Snapshot) {
         if g.procs.len() == 1 {
             visible.push(Row::Single(g.procs[0]));
         } else {
-            let expanded = filter_active || state.expanded.contains(&g.name);
+            let expanded = filter_active || state.expanded.contains(g.name);
             visible.push(Row::GroupHeader { g, expanded });
             if expanded {
                 for p in &g.procs {
@@ -312,7 +324,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut State, snap: &Snapshot) {
                         let idx = row.index();
                         match visible[idx] {
                             Row::GroupHeader { g, expanded } => {
-                                row.set_selected(selected_group.as_deref() == Some(&g.name));
+                                row.set_selected(selected_group.as_deref() == Some(g.name));
                                 render_group_header(
                                     &mut row,
                                     g,
@@ -324,7 +336,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut State, snap: &Snapshot) {
                                     .response()
                                     .on_hover_cursor(egui::CursorIcon::PointingHand);
                                 if resp.clicked() || resp.secondary_clicked() {
-                                    click_group = Some(g.name.clone());
+                                    click_group = Some(g.name.to_string());
                                 }
                                 resp.context_menu(|ui| {
                                     group_context_menu(ui, g, &mut open_properties_pid)
@@ -374,9 +386,12 @@ pub fn show(ui: &mut egui::Ui, state: &mut State, snap: &Snapshot) {
         state.selected_pid = None;
     }
     if let Some(pid) = open_properties_pid {
-        state.properties_pid = Some(pid);
+        let same = matches!(&state.properties, Some(v) if v.pid == pid);
+        if !same && let Some(p) = snap.processes.iter().find(|p| p.pid == pid) {
+            state.properties = Some(build_properties_view(p));
+        }
     }
-    render_properties_window(ui.ctx(), &mut state.properties_pid, snap);
+    render_properties_window(ui.ctx(), &mut state.properties, snap);
 
     ui.add_space(8.0);
     ui.horizontal(|ui| {
@@ -426,7 +441,7 @@ fn render_group_header(
             .selectable(false),
         );
         if arrow_resp.clicked() {
-            *toggle = Some(g.name.clone());
+            *toggle = Some(g.name.to_string());
         }
     });
     row.col(|_| {});
@@ -736,12 +751,12 @@ fn group_context_menu(ui: &mut egui::Ui, g: &Group<'_>, open_properties_pid: &mu
         }
     }
     if ui.button("Search online  \u{2197}").clicked() {
-        open_search(&g.name);
+        open_search(g.name);
         ui.close();
     }
     ui.separator();
     if ui.button("Copy name").clicked() {
-        ui.ctx().copy_text(g.name.clone());
+        ui.ctx().copy_text(g.name.to_string());
         ui.close();
     }
     if ui.button("Copy all PIDs").clicked() {
@@ -793,26 +808,40 @@ fn url_encode(s: &str) -> String {
     out
 }
 
+/// Resolve cwd, fd count, and well-known config paths once. The result is
+/// stable enough (working dir + fd count drift slowly, configs almost never)
+/// that we don't refresh on every frame — the modal exposes a Reload button.
+fn build_properties_view(p: &monitor::processes::ProcInfo) -> ProcessPropertiesView {
+    ProcessPropertiesView {
+        pid: p.pid,
+        cwd: monitor::processes::read_cwd(p.pid),
+        fd_count: monitor::processes::read_fd_count(p.pid),
+        configs: monitor::processes::find_config_paths(&p.name, &p.exe),
+    }
+}
+
 fn render_properties_window(
     ctx: &egui::Context,
-    properties_pid: &mut Option<u32>,
+    properties: &mut Option<ProcessPropertiesView>,
     snap: &Snapshot,
 ) {
-    let Some(pid) = *properties_pid else { return };
+    let Some(view) = properties.as_ref() else {
+        return;
+    };
+    let pid = view.pid;
     let Some(p) = snap.processes.iter().find(|p| p.pid == pid) else {
         // Process exited — auto-close.
-        *properties_pid = None;
+        *properties = None;
         return;
     };
 
-    let cwd = monitor::processes::read_cwd(pid);
-    let fd_count = monitor::processes::read_fd_count(pid);
     let uptime = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH + std::time::Duration::from_secs(p.start_time))
         .ok()
         .map(|d| widgets::format_duration(d.as_secs()));
 
     let mut open = true;
+    let mut reload = false;
     egui::Window::new(format!("Properties: {}", p.name))
         .id(egui::Id::new(("proc_properties", pid)))
         .open(&mut open)
@@ -820,6 +849,17 @@ fn render_properties_window(
         .resizable(true)
         .default_width(520.0)
         .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .button("\u{21BB}")
+                        .on_hover_text("Reload properties")
+                        .clicked()
+                    {
+                        reload = true;
+                    }
+                });
+            });
             widgets::stat(ui, "PID", &p.pid.to_string());
             widgets::stat(
                 ui,
@@ -835,7 +875,7 @@ fn render_properties_window(
             widgets::stat(ui, "Memory (RSS)", &widgets::format_bytes(p.mem_bytes));
             widgets::stat(ui, "Virtual memory", &widgets::format_bytes(p.virt_bytes));
             widgets::stat(ui, "Threads", &p.threads.to_string());
-            if let Some(fds) = fd_count {
+            if let Some(fds) = view.fd_count {
                 widgets::stat(ui, "Open file descriptors", &fds.to_string());
             }
             if let Some(up) = uptime {
@@ -846,14 +886,13 @@ fn render_properties_window(
                 widgets::path_field(ui, "Executable", &p.exe, widgets::OpenTarget::Parent);
                 ui.add_space(4.0);
             }
-            if let Some(cwd) = cwd {
-                widgets::path_field(ui, "Working directory", &cwd, widgets::OpenTarget::Self_);
+            if let Some(cwd) = &view.cwd {
+                widgets::path_field(ui, "Working directory", cwd, widgets::OpenTarget::Self_);
                 ui.add_space(4.0);
             }
-            let configs = monitor::processes::find_config_paths(&p.name, &p.exe);
-            if !configs.is_empty() {
+            if !view.configs.is_empty() {
                 ui.label(egui::RichText::new("Config").color(theme::TEXT_DIM));
-                for path in &configs {
+                for path in &view.configs {
                     widgets::path_field_compact(ui, &path.to_string_lossy());
                 }
                 ui.add_space(4.0);
@@ -863,8 +902,14 @@ fn render_properties_window(
                 ui.add(egui::Label::new(&p.cmd).wrap());
             }
         });
+    if reload
+        && let Some(v) = properties.as_mut()
+        && let Some(p) = snap.processes.iter().find(|p| p.pid == pid)
+    {
+        *v = build_properties_view(p);
+    }
     if !open {
-        *properties_pid = None;
+        *properties = None;
     }
 }
 

@@ -6,15 +6,22 @@ use crate::monitor::services::{self, ServiceInfo, ServiceScope};
 use crate::theme;
 use crate::ui::widgets;
 
+/// `systemctl show` is expensive (one process spawn per call). The modal must
+/// not re-fetch on every frame, so we cache the last result keyed by the open
+/// unit. A Reload button inside the modal re-fetches on demand.
+pub struct ServicePropertiesView {
+    pub name: String,
+    pub scope: ServiceScope,
+    pub data: services::ServiceProperties,
+}
+
 pub struct State {
     pub entries: Vec<ServiceInfo>,
     pub last_loaded: Instant,
     pub filter: String,
     pub last_message: Option<(bool, String)>,
     pub show_only_running: bool,
-    /// Unit currently shown in the Properties modal, identified by (name, scope)
-    /// so we can resolve back to the entry even after a refresh.
-    pub properties_unit: Option<(String, ServiceScope)>,
+    pub properties: Option<ServicePropertiesView>,
 }
 
 impl Default for State {
@@ -25,7 +32,7 @@ impl Default for State {
             filter: String::new(),
             last_message: None,
             show_only_running: false,
-            properties_unit: None,
+            properties: None,
         }
     }
 }
@@ -172,10 +179,19 @@ pub fn show(ui: &mut egui::Ui, state: &mut State) {
                 });
         });
 
-    if let Some(pair) = open_properties {
-        state.properties_unit = Some(pair);
+    if let Some((name, scope)) = open_properties {
+        // Only refetch when the user opens a different unit — re-clicking the
+        // same one keeps the cached data so the modal stays cheap.
+        let same = matches!(&state.properties, Some(v) if v.name == name && v.scope == scope);
+        if !same {
+            state.properties = Some(ServicePropertiesView {
+                data: services::show_properties(&name, &scope),
+                name,
+                scope,
+            });
+        }
     }
-    render_service_properties_window(ui.ctx(), &mut state.properties_unit);
+    render_service_properties_window(ui.ctx(), &mut state.properties);
 
     ui.add_space(6.0);
     ui.label(
@@ -212,14 +228,17 @@ fn scope_str(s: &ServiceScope) -> &'static str {
 
 fn render_service_properties_window(
     ctx: &egui::Context,
-    properties_unit: &mut Option<(String, ServiceScope)>,
+    properties: &mut Option<ServicePropertiesView>,
 ) {
-    let Some((name, scope)) = properties_unit.clone() else {
+    let Some(view) = properties.as_ref() else {
         return;
     };
-    let props = services::show_properties(&name, &scope);
 
     let mut open = true;
+    let mut reload = false;
+    let props = &view.data;
+    let name = view.name.clone();
+    let scope = view.scope.clone();
     egui::Window::new(format!("Properties: {name}"))
         .id(egui::Id::new((
             "svc_properties",
@@ -231,6 +250,17 @@ fn render_service_properties_window(
         .resizable(true)
         .default_width(560.0)
         .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .button("\u{21BB}")
+                        .on_hover_text("Reload properties")
+                        .clicked()
+                    {
+                        reload = true;
+                    }
+                });
+            });
             widgets::stat(ui, "Unit", &name);
             widgets::stat(ui, "Scope", scope_str(&scope));
             if !props.description.is_empty() {
@@ -296,8 +326,11 @@ fn render_service_properties_window(
                 ui.add(egui::Label::new(&props.exec_start).wrap());
             }
         });
+    if reload && let Some(v) = properties.as_mut() {
+        v.data = services::show_properties(&name, &scope);
+    }
     if !open {
-        *properties_unit = None;
+        *properties = None;
     }
 }
 

@@ -5,15 +5,20 @@ use crate::monitor::startup::{self, StartupEntry, StartupSource};
 use crate::theme;
 use crate::ui::widgets;
 
+/// `systemctl show` for a systemd-sourced startup row is the same expensive
+/// call as in the services tab. Cache the fetch so the modal stops spawning
+/// `systemctl` on every repaint.
+pub struct StartupPropertiesView {
+    pub idx: usize,
+    pub systemd: Option<services::ServiceProperties>,
+}
+
 pub struct State {
     pub entries: Vec<StartupEntry>,
     pub last_loaded: Instant,
     pub filter: String,
     pub last_error: Option<String>,
-    /// Index into `entries` of the row whose Properties modal is open. We use
-    /// an index rather than a clone because rows are stable across frames
-    /// (only refresh on Reload).
-    pub properties_idx: Option<usize>,
+    pub properties: Option<StartupPropertiesView>,
 }
 
 impl Default for State {
@@ -23,7 +28,7 @@ impl Default for State {
             last_loaded: Instant::now(),
             filter: String::new(),
             last_error: None,
-            properties_idx: None,
+            properties: None,
         }
     }
 }
@@ -141,9 +146,12 @@ pub fn show(ui: &mut egui::Ui, state: &mut State) {
     });
 
     if let Some(idx) = open_properties_idx {
-        state.properties_idx = Some(idx);
+        let same = matches!(&state.properties, Some(v) if v.idx == idx);
+        if !same {
+            state.properties = Some(build_properties_view(&state.entries, idx));
+        }
     }
-    render_startup_properties_window(ui.ctx(), &mut state.properties_idx, &state.entries);
+    render_startup_properties_window(ui.ctx(), &mut state.properties, &state.entries);
 
     for (idx, enabled) in to_toggle {
         let entry = state.entries[idx].clone();
@@ -287,33 +295,41 @@ fn render_row(
     ui.add_space(6.0);
 }
 
-fn render_startup_properties_window(
-    ctx: &egui::Context,
-    properties_idx: &mut Option<usize>,
-    entries: &[StartupEntry],
-) {
-    let Some(idx) = *properties_idx else { return };
-    let Some(e) = entries.get(idx) else {
-        *properties_idx = None;
-        return;
-    };
-
-    // For systemd entries `path` is the unit name; resolve the real
-    // FragmentPath + drop-ins via systemctl.
-    let is_systemd = matches!(
-        e.source,
-        StartupSource::SystemdSystem | StartupSource::SystemdUser
-    );
-    let systemd_props = if is_systemd {
+/// Resolve the heavy properties (`systemctl show` for systemd rows) once
+/// when the modal opens. Caller persists the result on `State`.
+fn build_properties_view(entries: &[StartupEntry], idx: usize) -> StartupPropertiesView {
+    let systemd = entries.get(idx).and_then(|e| {
+        let is_systemd = matches!(
+            e.source,
+            StartupSource::SystemdSystem | StartupSource::SystemdUser
+        );
+        if !is_systemd {
+            return None;
+        }
         let scope = if matches!(e.source, StartupSource::SystemdUser) {
             ServiceScope::User
         } else {
             ServiceScope::System
         };
         Some(services::show_properties(&e.exec, &scope))
-    } else {
-        None
+    });
+    StartupPropertiesView { idx, systemd }
+}
+
+fn render_startup_properties_window(
+    ctx: &egui::Context,
+    properties: &mut Option<StartupPropertiesView>,
+    entries: &[StartupEntry],
+) {
+    let Some(view) = properties.as_ref() else {
+        return;
     };
+    let idx = view.idx;
+    let Some(e) = entries.get(idx) else {
+        *properties = None;
+        return;
+    };
+    let systemd_props = view.systemd.clone();
 
     let title = if e.name.is_empty() {
         e.path
@@ -325,6 +341,11 @@ fn render_startup_properties_window(
     };
 
     let mut open = true;
+    let mut reload = false;
+    let is_systemd = matches!(
+        e.source,
+        StartupSource::SystemdSystem | StartupSource::SystemdUser
+    );
     egui::Window::new(format!("Properties: {title}"))
         .id(egui::Id::new(("startup_properties", idx)))
         .open(&mut open)
@@ -332,6 +353,19 @@ fn render_startup_properties_window(
         .resizable(true)
         .default_width(560.0)
         .show(ctx, |ui| {
+            if is_systemd {
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .button("\u{21BB}")
+                            .on_hover_text("Reload properties")
+                            .clicked()
+                        {
+                            reload = true;
+                        }
+                    });
+                });
+            }
             widgets::stat(ui, "Name", if e.name.is_empty() { &title } else { &e.name });
             widgets::stat(ui, "Source", scope_badge(&e.source));
             if !e.comment.is_empty() {
@@ -417,8 +451,11 @@ fn render_startup_properties_window(
                 }
             }
         });
+    if reload && let Some(v) = properties.as_mut() {
+        *v = build_properties_view(entries, idx);
+    }
     if !open {
-        *properties_idx = None;
+        *properties = None;
     }
 }
 
