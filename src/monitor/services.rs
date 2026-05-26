@@ -65,6 +65,87 @@ fn list_scope(scope: ServiceScope) -> Vec<ServiceInfo> {
     v
 }
 
+#[derive(Default, Clone)]
+pub struct ServiceProperties {
+    pub description: String,
+    pub load_state: String,
+    pub active_state: String,
+    pub sub_state: String,
+    pub fragment_path: String,
+    pub drop_in_paths: Vec<String>,
+    pub exec_start: String,
+    pub main_pid: String,
+    pub user: String,
+    pub working_directory: String,
+    pub unit_file_state: String,
+    pub memory_current: String,
+    pub tasks_current: String,
+}
+
+/// Fetch detailed properties for a unit via `systemctl show`. Properties not
+/// reported (or set to placeholders like "[not set]") collapse to empty strings.
+pub fn show_properties(name: &str, scope: &ServiceScope) -> ServiceProperties {
+    let mut cmd = Command::new("systemctl");
+    if scope == &ServiceScope::User {
+        cmd.arg("--user");
+    }
+    let props = [
+        "Description",
+        "LoadState",
+        "ActiveState",
+        "SubState",
+        "FragmentPath",
+        "DropInPaths",
+        "ExecStart",
+        "MainPID",
+        "User",
+        "WorkingDirectory",
+        "UnitFileState",
+        "MemoryCurrent",
+        "TasksCurrent",
+    ];
+    cmd.arg("show");
+    cmd.arg(name);
+    for p in &props {
+        cmd.arg(format!("--property={p}"));
+    }
+    let mut out = ServiceProperties::default();
+    let Ok(o) = cmd.output() else { return out };
+    if !o.status.success() {
+        return out;
+    }
+    let text = String::from_utf8_lossy(&o.stdout);
+    for line in text.lines() {
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
+        let v = v.trim().to_string();
+        match k.trim() {
+            "Description" => out.description = v,
+            "LoadState" => out.load_state = v,
+            "ActiveState" => out.active_state = v,
+            "SubState" => out.sub_state = v,
+            "FragmentPath" => out.fragment_path = v,
+            "DropInPaths" => {
+                // Space-separated list of paths.
+                out.drop_in_paths = v
+                    .split_whitespace()
+                    .map(str::to_string)
+                    .collect();
+            }
+            "ExecStart" => out.exec_start = v,
+            "MainPID" => out.main_pid = v,
+            "User" => out.user = v,
+            "WorkingDirectory" => out.working_directory = v,
+            "UnitFileState" => out.unit_file_state = v,
+            "MemoryCurrent" => out.memory_current = v,
+            "TasksCurrent" => out.tasks_current = v,
+            _ => {}
+        }
+    }
+    out
+}
+
 pub fn control(name: &str, action: &str, scope: &ServiceScope) -> Result<(), String> {
     let mut cmd = Command::new("systemctl");
     if scope == &ServiceScope::User {

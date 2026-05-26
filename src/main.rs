@@ -32,6 +32,7 @@ fn main() -> anyhow::Result<()> {
         native_options,
         Box::new(|cc| {
             theme::apply(&cc.egui_ctx);
+            egui_extras::install_image_loaders(&cc.egui_ctx);
             Ok(Box::new(App::new()))
         }),
     )

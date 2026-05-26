@@ -9,7 +9,8 @@ license = "MIT"
 eframe = { version = "0.32", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
 egui = "0.32"
 egui_plot = "0.33"
-egui_extras = { version = "0.32", default-features = false }
+egui_extras = { version = "0.32", default-features = false, features = ["image", "file", "svg"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 sysinfo = "0.33"
 nvml-wrapper = "0.11"
 anyhow = "1"

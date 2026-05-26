@@ -386,7 +386,7 @@ fn card_button_inner(
 // --- detail panels ---
 
 fn panel_cpu(ui: &mut egui::Ui, snap: &Snapshot) {
-    ui.heading(format!("CPU — {}", snap.system.cpu_brand));
+    ui.heading(format!("CPU: {}", snap.system.cpu_brand));
     ui.label(
         egui::RichText::new(format!(
             "{} cores ({} logical) · {} MHz",
@@ -428,11 +428,14 @@ fn panel_cpu(ui: &mut egui::Ui, snap: &Snapshot) {
         ui.add_space(4.0);
         let cols = 4;
         let cores = &snap.system.per_core;
+        let spacing_x = ui.spacing().item_spacing.x;
+        let total_w = ui.available_width();
+        let cell_w = ((total_w - spacing_x * (cols as f32 - 1.0)) / cols as f32).max(80.0);
         for (row_idx, row) in cores.chunks(cols).enumerate() {
             ui.horizontal(|ui| {
                 for (col_idx, &v) in row.iter().enumerate() {
                     let core = row_idx * cols + col_idx;
-                    ui.allocate_ui(egui::vec2(170.0, 56.0), |ui| {
+                    ui.allocate_ui(egui::vec2(cell_w, 56.0), |ui| {
                         ui.vertical(|ui| {
                             ui.horizontal(|ui| {
                                 ui.label(
@@ -519,7 +522,7 @@ fn panel_disk(ui: &mut egui::Ui, snap: &Snapshot, idx: usize) {
         ui.label("No disk");
         return;
     };
-    ui.heading(format!("Disk — {}", short_disk_name(&d.name)));
+    ui.heading(format!("Disk: {}", short_disk_name(&d.name)));
     let part_word = if d.partitions > 1 {
         "partitions"
     } else {
@@ -605,7 +608,7 @@ fn panel_gpu(ui: &mut egui::Ui, snap: &Snapshot, idx: usize) {
         ui.label("No GPU");
         return;
     };
-    ui.heading(format!("GPU — {}", g.name));
+    ui.heading(format!("GPU: {}", g.name));
     ui.label(
         egui::RichText::new(format!("{} · driver {}", g.vendor, g.driver)).color(theme::TEXT_DIM),
     );

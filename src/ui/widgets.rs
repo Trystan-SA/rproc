@@ -186,6 +186,7 @@ pub fn big_plot(
         .allow_scroll(false)
         .allow_boxed_zoom(false)
         .allow_double_click_reset(false)
+        .set_margin_fraction(egui::Vec2::new(0.0, 0.05))
         .default_x_bounds(0.0, (HISTORY_LEN - 1) as f64)
         .default_y_bounds(0.0, max_value as f64)
         .show(ui, |plot_ui| {
@@ -221,6 +222,7 @@ pub fn big_plot_f64(
         .allow_scroll(false)
         .allow_boxed_zoom(false)
         .allow_double_click_reset(false)
+        .set_margin_fraction(egui::Vec2::new(0.0, 0.05))
         .default_x_bounds(0.0, (HISTORY_LEN - 1) as f64)
         .default_y_bounds(0.0, max_value.max(1.0))
         .show(ui, |plot_ui| {
@@ -429,4 +431,78 @@ pub fn stat(ui: &mut egui::Ui, label: &str, value: &str) {
 
 pub fn max_in<I: Iterator<Item = f64>>(it: I) -> f64 {
     it.fold(0.0_f64, f64::max)
+}
+
+#[derive(Copy, Clone)]
+pub enum OpenTarget {
+    /// Open the path itself — used for directories.
+    Self_,
+    /// Open the parent — used for files (so the file manager lands on the
+    /// containing folder with the file selected).
+    Parent,
+}
+
+pub fn open_path(path: &str, target: OpenTarget) {
+    let p = std::path::Path::new(path);
+    let dest = match target {
+        OpenTarget::Self_ => p,
+        OpenTarget::Parent => p.parent().unwrap_or(p),
+    };
+    let _ = std::process::Command::new("xdg-open").arg(dest).spawn();
+}
+
+/// Labeled path block: dim label + Open button on the first row, wrapped
+/// clickable path on the second. Clicking either opens the path (or its
+/// parent, per `target`) in the file manager.
+pub fn path_field(ui: &mut egui::Ui, label: &str, path: &str, target: OpenTarget) {
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(label).color(theme::TEXT_DIM));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui
+                .add(egui::Button::new("Open").small())
+                .on_hover_text("Open in file manager")
+                .clicked()
+            {
+                open_path(path, target);
+            }
+        });
+    });
+    let resp = ui
+        .add(
+            egui::Label::new(egui::RichText::new(path).color(theme::TEXT))
+                .wrap()
+                .sense(egui::Sense::click()),
+        )
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Open in file manager");
+    if resp.clicked() {
+        open_path(path, target);
+    }
+}
+
+/// Single-line variant: the row IS the path. Clickable label + small Open
+/// button on the right. Always opens the path itself (not its parent).
+pub fn path_field_compact(ui: &mut egui::Ui, path: &str) {
+    ui.horizontal(|ui| {
+        let resp = ui
+            .add(
+                egui::Label::new(egui::RichText::new(path).color(theme::TEXT))
+                    .truncate()
+                    .sense(egui::Sense::click()),
+            )
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text("Open in file manager");
+        if resp.clicked() {
+            open_path(path, OpenTarget::Self_);
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui
+                .add(egui::Button::new("Open").small())
+                .on_hover_text("Open in file manager")
+                .clicked()
+            {
+                open_path(path, OpenTarget::Self_);
+            }
+        });
+    });
 }
