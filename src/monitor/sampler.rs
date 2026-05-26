@@ -53,18 +53,15 @@ impl Sampler {
 
         // Pre-fill the rolling history from the daemon's on-disk ring-buffer
         // so the user sees up to the last 60 s of activity as soon as the
-        // window opens — even if rproc was just relaunched. The daemon
-        // only persists global aggregates, so per-core / per-interface /
-        // per-device series stay empty until the GUI samples them itself.
+        // window opens — even if rproc was just relaunched. CPU per-core
+        // is the one detail series we don't persist (8–16× the storage
+        // cost for little user value); it stays empty until the GUI samples.
         if let Ok(path) = crate::daemon::storage::history_path()
             && let Ok(samples) = crate::daemon::storage::RingBuffer::read_all(&path)
             && !samples.is_empty()
         {
             let mut snap = inner.lock().unwrap();
-            for s in &samples {
-                push_capped(&mut snap.history.cpu_total, s.cpu_total, HISTORY_LEN);
-                push_capped(&mut snap.history.ram_used_pct, s.ram_used_pct, HISTORY_LEN);
-            }
+            prefill_history(&mut snap.history, &samples);
         }
 
         let inner_t = inner.clone();
@@ -244,4 +241,70 @@ fn push_capped<T>(q: &mut VecDeque<T>, v: T, cap: usize) {
         q.pop_front();
     }
     q.push_back(v);
+}
+
+/// Replay persisted samples into the live history buffers. Each network
+/// and disk slot carries its own name, so per-interface / per-device
+/// series are reconstructed in the same `HashMap<String, _>` shape the
+/// live sampler maintains — including the case where an interface only
+/// shows up in part of the window (its `VecDeque` will simply be shorter).
+fn prefill_history(history: &mut History, samples: &[crate::daemon::storage::Sample]) {
+    use crate::daemon::storage::name_from_bytes;
+
+    for s in samples {
+        push_capped(&mut history.cpu_total, s.cpu_total, HISTORY_LEN);
+        push_capped(&mut history.ram_used_pct, s.ram_used_pct, HISTORY_LEN);
+
+        for slot in &s.nets {
+            let name = name_from_bytes(&slot.name);
+            if name.is_empty() {
+                continue;
+            }
+            let r = history
+                .net_rx_bps
+                .entry(name.clone())
+                .or_insert_with(|| VecDeque::with_capacity(HISTORY_LEN));
+            push_capped(r, slot.rx_bps as f64, HISTORY_LEN);
+            let w = history
+                .net_tx_bps
+                .entry(name)
+                .or_insert_with(|| VecDeque::with_capacity(HISTORY_LEN));
+            push_capped(w, slot.tx_bps as f64, HISTORY_LEN);
+        }
+
+        for slot in &s.disks {
+            let name = name_from_bytes(&slot.name);
+            if name.is_empty() {
+                continue;
+            }
+            let r = history
+                .disk_read_bps
+                .entry(name.clone())
+                .or_insert_with(|| VecDeque::with_capacity(HISTORY_LEN));
+            push_capped(r, slot.read_bps as f64, HISTORY_LEN);
+            let w = history
+                .disk_write_bps
+                .entry(name)
+                .or_insert_with(|| VecDeque::with_capacity(HISTORY_LEN));
+            push_capped(w, slot.write_bps as f64, HISTORY_LEN);
+        }
+
+        for (idx, slot) in s.gpus.iter().enumerate() {
+            // NaN sentinel marks an unused slot — skip without growing the
+            // gpu_util / gpu_mem_pct vectors beyond the real device count.
+            if slot.util_pct.is_nan() {
+                continue;
+            }
+            while history.gpu_util.len() <= idx {
+                history.gpu_util.push(VecDeque::with_capacity(HISTORY_LEN));
+            }
+            while history.gpu_mem_pct.len() <= idx {
+                history
+                    .gpu_mem_pct
+                    .push(VecDeque::with_capacity(HISTORY_LEN));
+            }
+            push_capped(&mut history.gpu_util[idx], slot.util_pct, HISTORY_LEN);
+            push_capped(&mut history.gpu_mem_pct[idx], slot.mem_pct, HISTORY_LEN);
+        }
+    }
 }
