@@ -113,13 +113,13 @@ jobs:
           strip target/release/rproc || true
 
       - name: Build .rpm
-        run: cargo generate-rpm --output dist/
+        run: cargo generate-rpm
 
       - name: Upload .rpm
         uses: actions/upload-artifact@v4
         with:
           name: rproc-rpm
-          path: dist/*.rpm
+          path: target/generate-rpm/*.rpm
 
   build-flatpak:
     runs-on: ubuntu-latest
