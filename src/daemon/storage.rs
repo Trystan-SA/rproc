@@ -48,12 +48,9 @@ const NET_SLOT_SIZE: usize = NAME_LEN + 4 + 4; // 32
 const DISK_SLOT_SIZE: usize = NAME_LEN + 4 + 4; // 32
 const GPU_SLOT_SIZE: usize = 4 + 4; // 8
 
-const SAMPLE_SIZE: u64 = (8
-    + 4
-    + 4
-    + MAX_NETS * NET_SLOT_SIZE
-    + MAX_DISKS * DISK_SLOT_SIZE
-    + MAX_GPUS * GPU_SLOT_SIZE) as u64;
+const SAMPLE_SIZE: u64 =
+    (8 + 4 + 4 + MAX_NETS * NET_SLOT_SIZE + MAX_DISKS * DISK_SLOT_SIZE + MAX_GPUS * GPU_SLOT_SIZE)
+        as u64;
 const FILE_SIZE: u64 = HEADER_SIZE + SAMPLE_SIZE * CAPACITY as u64;
 
 #[derive(Clone, Copy, Debug)]
@@ -137,7 +134,7 @@ pub fn name_from_bytes(b: &[u8; NAME_LEN]) -> String {
 }
 
 impl Sample {
-    fn to_bytes(&self) -> [u8; SAMPLE_SIZE as usize] {
+    fn to_bytes(self) -> [u8; SAMPLE_SIZE as usize] {
         let mut b = [0u8; SAMPLE_SIZE as usize];
         let mut o = 0;
         b[o..o + 8].copy_from_slice(&self.timestamp_secs.to_le_bytes());
