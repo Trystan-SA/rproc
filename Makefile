@@ -1,5 +1,5 @@
 VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-APP_ID  := io.github.trystan-sa.rproc
+APP_ID  := io.github.trystan_sa.rproc
 
 .PHONY: help flatpak flatpak-install deb rpm clean release
 

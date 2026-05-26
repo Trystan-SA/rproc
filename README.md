@@ -51,7 +51,7 @@ sudo dnf install ./rproc-<version>-1.x86_64.rpm
 
 ```bash
 flatpak install --user rproc-<version>-x86_64.flatpak
-flatpak run io.github.trystan-sa.rproc
+flatpak run io.github.trystan_sa.rproc
 ```
 
 ### From source

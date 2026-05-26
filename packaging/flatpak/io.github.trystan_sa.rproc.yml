@@ -1,4 +1,4 @@
-app-id: io.github.trystan-sa.rproc
+app-id: io.github.trystan_sa.rproc
 runtime: org.freedesktop.Platform
 runtime-version: '24.08'
 sdk: org.freedesktop.Sdk
@@ -26,12 +26,12 @@ modules:
     build-commands:
       - cargo --offline build --release --verbose
       - install -Dm755 target/release/rproc /app/bin/rproc
-      - install -Dm644 packaging/io.github.trystan-sa.rproc.desktop
-          /app/share/applications/io.github.trystan-sa.rproc.desktop
-      - install -Dm644 packaging/io.github.trystan-sa.rproc.metainfo.xml
-          /app/share/metainfo/io.github.trystan-sa.rproc.metainfo.xml
-      - install -Dm644 packaging/icons/hicolor/scalable/apps/io.github.trystan-sa.rproc.svg
-          /app/share/icons/hicolor/scalable/apps/io.github.trystan-sa.rproc.svg
+      - install -Dm644 packaging/io.github.trystan_sa.rproc.desktop
+          /app/share/applications/io.github.trystan_sa.rproc.desktop
+      - install -Dm644 packaging/io.github.trystan_sa.rproc.metainfo.xml
+          /app/share/metainfo/io.github.trystan_sa.rproc.metainfo.xml
+      - install -Dm644 packaging/icons/hicolor/scalable/apps/io.github.trystan_sa.rproc.svg
+          /app/share/icons/hicolor/scalable/apps/io.github.trystan_sa.rproc.svg
     sources:
       - type: dir
         path: ../..

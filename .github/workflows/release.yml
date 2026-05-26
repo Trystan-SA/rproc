@@ -142,7 +142,7 @@ jobs:
         uses: flathub-infra/flatpak-github-actions/flatpak-builder@master
         with:
           bundle: rproc-${{ github.ref_name }}-x86_64.flatpak
-          manifest-path: packaging/flatpak/io.github.trystan-sa.rproc.yml
+          manifest-path: packaging/flatpak/io.github.trystan_sa.rproc.yml
           cache-key: flatpak-builder-${{ github.sha }}
 
   release:

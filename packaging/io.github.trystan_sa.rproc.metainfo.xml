@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>io.github.trystan-sa.rproc</id>
+  <id>io.github.trystan_sa.rproc</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
   <name>rproc</name>
   <summary>Resource and process monitor for Linux</summary>
-  <developer id="io.github.trystan-sa">
+  <developer id="io.github.trystan_sa">
     <name>Trystan Sarrade</name>
   </developer>
   <description>
@@ -23,7 +23,7 @@
       <li>Adjustable refresh rate.</li>
     </ul>
   </description>
-  <launchable type="desktop-id">io.github.trystan-sa.rproc.desktop</launchable>
+  <launchable type="desktop-id">io.github.trystan_sa.rproc.desktop</launchable>
   <url type="homepage">https://github.com/Trystan-SA/rproc</url>
   <url type="bugtracker">https://github.com/Trystan-SA/rproc/issues</url>
   <url type="vcs-browser">https://github.com/Trystan-SA/rproc</url>
