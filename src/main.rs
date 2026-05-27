@@ -16,9 +16,16 @@ fn main() -> anyhow::Result<()> {
         return daemon::run();
     }
 
+    // Load persisted settings up front so we can honour the daemon toggle
+    // before deciding whether to spawn the background sampler.
+    let settings = settings::Settings::load();
+
     // Make sure a background sampler is running so this launch (and the
-    // next one) sees fresh history. No-op if one is already alive.
-    daemon::spawn_if_absent();
+    // next one) sees fresh history. No-op if one is already alive, and
+    // skipped entirely when the user has disabled the daemon.
+    if settings.daemon_enabled() {
+        daemon::spawn_if_absent();
+    }
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -30,10 +37,10 @@ fn main() -> anyhow::Result<()> {
     eframe::run_native(
         "rproc",
         native_options,
-        Box::new(|cc| {
+        Box::new(move |cc| {
             theme::apply(&cc.egui_ctx);
             egui_extras::install_image_loaders(&cc.egui_ctx);
-            Ok(Box::new(App::new()))
+            Ok(Box::new(App::new(settings)))
         }),
     )
     .map_err(|e| anyhow::anyhow!("eframe: {e}"))

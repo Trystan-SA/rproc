@@ -174,3 +174,19 @@ pub fn spawn_if_absent() {
         eprintln!("rproc: failed to spawn background sampler: {e}");
     }
 }
+
+/// Stop a running daemon, if any, by sending SIGTERM to the PID recorded in
+/// the pidfile. The daemon installs no signal handler, so the default
+/// SIGTERM disposition terminates it and the kernel releases its flock.
+/// Best-effort: a missing pidfile or already-dead process is a no-op.
+pub fn stop() {
+    let pid_path = match pidfile::pid_path() {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    if let Some(pid) = pidfile::PidFile::read_pid(&pid_path) {
+        unsafe {
+            libc::kill(pid, libc::SIGTERM);
+        }
+    }
+}

@@ -53,11 +53,11 @@ cargo run --release
 
 ## Features
 
-- **Processes** — CPU, memory, disk I/O, threads and status. Sort, filter and kill.
-- **Performance** — live charts for CPU (global + per-core), memory, disks, network and GPU (NVIDIA / AMD / Intel).
-- **Startup** — XDG autostart entries and enabled systemd units.
-- **Services** — systemctl system and user units.
-- **Settings** — adjustable refresh rate.
+- **Processes**: CPU, memory, disk I/O, threads and status. Sort, filter and kill.
+- **Performance**: live charts for CPU (global + per-core), memory, disks, network and GPU (NVIDIA / AMD / Intel).
+- **Startup**: XDG autostart entries and enabled systemd units.
+- **Services**: systemctl system and user units.
+- **Settings**: adjustable refresh rate.
 
 <div align="center">
   <img src="./img/capture2.png" alt="Processes tab" width="450">
@@ -67,15 +67,14 @@ cargo run --release
 ## Requirements
 
 - Linux (X11 or Wayland)
-- `systemctl` — for the Services and Startup tabs
-- NVIDIA driver — for NVIDIA GPU metrics (optional)
+- `systemctl` for the Services and Startup tabs
 
 ## Background sampling
 
 `rproc` keeps a 60-sample rolling window of system metrics
-(`~/.cache/rproc/history.bin`, ~2 KB, fixed size — no growth, no leak) so
+(`~/.cache/rproc/history.bin`, ~2 KB, fixed size so
 re-opening the window shows the last minute of CPU and memory activity
-even after a full close.
+even after a full close. You can disable it in the settings page.
 
 The collector runs as a detached background process, auto-spawned the
 first time you launch the GUI (`setsid`-detached, so closing rproc leaves
@@ -105,19 +104,6 @@ make rpm               # build an .rpm -> target/generate-rpm/
 make flatpak           # build a local .flatpak bundle
 make flatpak-install   # build + install the Flatpak for the current user
 ```
-
-## Releasing
-
-Maintainers cut a release with a single command:
-
-```bash
-make release
-```
-
-It prompts for the version bump (patch / minor / major), tags `vX.Y.Z`
-and pushes. GitHub Actions then builds the binary, `.deb`, `.rpm` and
-`.flatpak` and publishes them to the
-[Releases page](https://github.com/Trystan-SA/rproc/releases).
 
 ## License
 

@@ -46,6 +46,12 @@ impl PidFile {
         Ok(Some(Self { _file: file }))
     }
 
+    /// Read the PID recorded in the pidfile, if the file exists and holds a
+    /// parseable integer. Used to signal a running daemon to stop.
+    pub fn read_pid(path: &Path) -> Option<libc::pid_t> {
+        std::fs::read_to_string(path).ok()?.trim().parse().ok()
+    }
+
     /// Best-effort probe: returns `true` if some other process currently
     /// holds the lock. There's an unavoidable race between this check and
     /// any subsequent spawn — but a duplicate daemon will itself fail to

@@ -1,3 +1,4 @@
+use crate::daemon;
 use crate::settings::{MAX_REFRESH_MS, MIN_REFRESH_MS, REFRESH_PRESETS, Settings};
 use crate::theme;
 use crate::ui::widgets;
@@ -65,6 +66,56 @@ pub fn show(ui: &mut egui::Ui, _state: &mut State, settings: &Settings) {
                 .color(theme::ACCENT)
                 .strong(),
         );
+    });
+
+    ui.add_space(12.0);
+
+    widgets::card(ui, |ui| {
+        ui.vertical(|ui| {
+            ui.label(
+                egui::RichText::new("Background history")
+                    .strong()
+                    .size(15.0),
+            );
+            ui.label(
+                egui::RichText::new(
+                    "Run a tiny background process that records the last 60 s of \
+                     CPU, memory, disk, network and GPU activity. When on, rproc \
+                     shows that recent history the moment you reopen it, even after \
+                     a restart. When off, no background process runs, but history \
+                     starts empty each time you open the window.",
+                )
+                .color(theme::TEXT_DIM)
+                .small(),
+            );
+        });
+        ui.add_space(10.0);
+
+        let mut enabled = settings.daemon_enabled();
+        if ui
+            .checkbox(
+                &mut enabled,
+                egui::RichText::new("Keep the last 60 seconds in the background").strong(),
+            )
+            .changed()
+        {
+            settings.set_daemon_enabled(enabled);
+            // Apply the change immediately: start the daemon now, or stop the
+            // one that's currently running.
+            if enabled {
+                daemon::spawn_if_absent();
+            } else {
+                daemon::stop();
+            }
+        }
+
+        ui.add_space(6.0);
+        let (status, color) = if enabled {
+            ("Background sampler running", theme::ACCENT)
+        } else {
+            ("Background sampler off", theme::TEXT_DIM)
+        };
+        ui.label(egui::RichText::new(status).color(color).strong());
     });
 
     ui.add_space(12.0);
