@@ -179,9 +179,40 @@ fn build_groups<'a>(
 
 #[derive(Clone, Copy)]
 enum Row<'a> {
+    SectionHeader(&'static str),
     GroupHeader { g: &'a Group<'a>, expanded: bool },
     Single(&'a monitor::processes::ProcInfo),
     Child(&'a monitor::processes::ProcInfo),
+}
+
+/// Split the built groups into the "Apps" section (processes with a freedesktop
+/// `.desktop` entry — launchable applications) and the background section
+/// (daemons, kernel threads, helpers). Each section is sorted independently by
+/// the caller so background processes can never rank above apps.
+fn append_section<'a>(
+    visible: &mut Vec<Row<'a>>,
+    title: &'static str,
+    groups: &'a [Group<'a>],
+    filter_active: bool,
+    expanded_set: &HashSet<String>,
+) {
+    if groups.is_empty() {
+        return;
+    }
+    visible.push(Row::SectionHeader(title));
+    for g in groups {
+        if g.procs.len() == 1 {
+            visible.push(Row::Single(g.procs[0]));
+        } else {
+            let expanded = filter_active || expanded_set.contains(g.name);
+            visible.push(Row::GroupHeader { g, expanded });
+            if expanded {
+                for p in &g.procs {
+                    visible.push(Row::Child(p));
+                }
+            }
+        }
+    }
 }
 
 pub fn show(ui: &mut egui::Ui, state: &mut State, snap: &Snapshot) {
@@ -242,27 +273,31 @@ pub fn show(ui: &mut egui::Ui, state: &mut State, snap: &Snapshot) {
         p.name.to_lowercase().contains(&filter) || p.pid.to_string().contains(&filter)
     };
 
-    let mut groups: Vec<Group> = build_groups(&snap.processes, &matches);
+    let groups: Vec<Group> = build_groups(&snap.processes, &matches);
 
-    sort_groups(&mut groups, state.sort, state.descending);
-    for g in &mut groups {
-        sort_children(&mut g.procs, state.sort, state.descending);
-    }
-
-    let mut visible: Vec<Row> = Vec::with_capacity(snap.processes.len());
-    for g in &groups {
-        if g.procs.len() == 1 {
-            visible.push(Row::Single(g.procs[0]));
-        } else {
-            let expanded = filter_active || state.expanded.contains(g.name);
-            visible.push(Row::GroupHeader { g, expanded });
-            if expanded {
-                for p in &g.procs {
-                    visible.push(Row::Child(p));
-                }
-            }
+    // Apps (have a .desktop entry) on top, background processes below. Each
+    // section sorts on its own so a busy daemon never jumps above the apps.
+    let (mut apps, mut services): (Vec<Group>, Vec<Group>) = groups.into_iter().partition(|g| {
+        g.procs
+            .iter()
+            .any(|p| state.icons.has_desktop_entry(&p.name, &p.exe))
+    });
+    for section in [&mut apps, &mut services] {
+        sort_groups(section, state.sort, state.descending);
+        for g in section.iter_mut() {
+            sort_children(&mut g.procs, state.sort, state.descending);
         }
     }
+
+    let mut visible: Vec<Row> = Vec::with_capacity(snap.processes.len() + 2);
+    append_section(&mut visible, "Apps", &apps, filter_active, &state.expanded);
+    append_section(
+        &mut visible,
+        "Background processes",
+        &services,
+        filter_active,
+        &state.expanded,
+    );
 
     let total = snap.processes.len();
     let total_cpu_used: f32 = snap.system.cpu_total;
@@ -288,6 +323,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut State, snap: &Snapshot) {
         .show(ui, |ui| {
             let header_height = 26.0;
             let row_height = 22.0;
+            let section_height = 30.0;
 
             TableBuilder::new(ui)
                 .striped(true)
@@ -337,9 +373,16 @@ pub fn show(ui: &mut egui::Ui, state: &mut State, snap: &Snapshot) {
                     });
                 })
                 .body(|body| {
-                    body.rows(row_height, visible.len(), |mut row| {
+                    let heights = visible.iter().map(|r| match r {
+                        Row::SectionHeader(_) => section_height,
+                        _ => row_height,
+                    });
+                    body.heterogeneous_rows(heights, |mut row| {
                         let idx = row.index();
                         match visible[idx] {
+                            Row::SectionHeader(title) => {
+                                render_section_header(&mut row, title);
+                            }
                             Row::GroupHeader { g, expanded } => {
                                 row.set_selected(selected_group.as_deref() == Some(g.name));
                                 render_group_header(
@@ -425,6 +468,25 @@ pub fn show(ui: &mut egui::Ui, state: &mut State, snap: &Snapshot) {
             );
         }
     });
+}
+
+fn render_section_header(row: &mut TableRow<'_, '_>, title: &str) {
+    row.col(|ui| {
+        ui.add_space(8.0);
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(title.to_uppercase())
+                    .color(theme::ACCENT)
+                    .strong(),
+            )
+            .selectable(false),
+        );
+    });
+    // Leave the remaining six columns blank — the header is a divider, not a
+    // data row.
+    for _ in 0..6 {
+        row.col(|_| {});
+    }
 }
 
 fn render_group_header(

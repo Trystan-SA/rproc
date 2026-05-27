@@ -24,20 +24,7 @@ impl Resolver {
     }
 
     pub fn icon_uri(&mut self, proc_name: &str, exe_path: &str) -> Option<String> {
-        let exe_base = Path::new(exe_path)
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-        let proc_lower = proc_name.to_lowercase();
-        let stem = proc_lower
-            .split(|c: char| !c.is_alphanumeric() && c != '_')
-            .next()
-            .unwrap_or("")
-            .to_string();
-
-        let candidates = [exe_base, proc_lower, stem];
-        for cand in candidates {
+        for cand in desktop_candidates(proc_name, exe_path) {
             if cand.is_empty() {
                 continue;
             }
@@ -48,6 +35,17 @@ impl Resolver {
             }
         }
         None
+    }
+
+    /// Whether the process maps to a freedesktop `.desktop` entry — i.e. it's
+    /// a launchable application rather than a background daemon. The Processes
+    /// panel uses this to split "Apps" from background processes. Unlike
+    /// `icon_uri` it doesn't require the named icon file to resolve on disk: a
+    /// stale or missing icon shouldn't demote an app to the background section.
+    pub fn has_desktop_entry(&self, proc_name: &str, exe_path: &str) -> bool {
+        desktop_candidates(proc_name, exe_path)
+            .iter()
+            .any(|c| !c.is_empty() && self.name_to_icon.contains_key(c))
     }
 
     fn resolve_icon(&mut self, icon: &str) -> Option<String> {
@@ -70,6 +68,25 @@ impl Default for Resolver {
     fn default() -> Self {
         Self::new()
     }
+}
+
+// Lowercased lookup keys for a process: the exe basename, the full process
+// name, and the leading alphanumeric stem of the name (so "code-insiders" can
+// still match "code"). Shared by `icon_uri` and `has_desktop_entry` so both
+// agree on what counts as a match.
+fn desktop_candidates(proc_name: &str, exe_path: &str) -> [String; 3] {
+    let exe_base = Path::new(exe_path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let proc_lower = proc_name.to_lowercase();
+    let stem = proc_lower
+        .split(|c: char| !c.is_alphanumeric() && c != '_')
+        .next()
+        .unwrap_or("")
+        .to_string();
+    [exe_base, proc_lower, stem]
 }
 
 fn desktop_dirs() -> Vec<PathBuf> {
@@ -269,6 +286,46 @@ fn icon_theme_bases() -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn desktop_candidates_lowercases_and_extracts_stem() {
+        let c = desktop_candidates("Code-Insiders", "/usr/bin/Code");
+        assert_eq!(c[0], "code"); // exe basename, lowercased
+        assert_eq!(c[1], "code-insiders"); // full name, lowercased
+        assert_eq!(c[2], "code"); // leading alphanumeric stem
+    }
+
+    #[test]
+    fn desktop_candidates_empty_inputs_yield_empty_strings() {
+        let c = desktop_candidates("", "");
+        assert!(c.iter().all(|s| s.is_empty()));
+    }
+
+    #[test]
+    fn has_desktop_entry_matches_any_candidate() {
+        let mut name_to_icon = HashMap::new();
+        name_to_icon.insert("firefox".to_string(), "firefox".to_string());
+        let r = Resolver {
+            name_to_icon,
+            cache: HashMap::new(),
+        };
+        // Matches via the process name even though the exe basename differs.
+        assert!(r.has_desktop_entry("firefox", "/usr/lib/firefox/firefox-bin"));
+        // No desktop entry → background process.
+        assert!(!r.has_desktop_entry("kworker/0:1", ""));
+    }
+
+    #[test]
+    fn has_desktop_entry_matches_on_stem() {
+        let mut name_to_icon = HashMap::new();
+        name_to_icon.insert("code".to_string(), "vscode".to_string());
+        let r = Resolver {
+            name_to_icon,
+            cache: HashMap::new(),
+        };
+        // "code-insiders" has no direct entry, but its stem "code" does.
+        assert!(r.has_desktop_entry("code-insiders", ""));
+    }
 
     #[test]
     fn shell_split_basic() {

@@ -132,6 +132,7 @@ fn render_cards(ui: &mut egui::Ui, snap: &Snapshot, current: &mut Section) {
         "CPU",
         &snap.system.cpu_brand,
         snap.system.cpu_total,
+        snap.system.cpu_temp_c,
         &snap.history.cpu_total,
         theme::GRAPH_CPU,
         Section::Cpu,
@@ -148,6 +149,7 @@ fn render_cards(ui: &mut egui::Ui, snap: &Snapshot, current: &mut Section) {
         "Memory",
         &ram_value,
         snap.system.ram_used_pct,
+        0.0,
         &snap.history.ram_used_pct,
         theme::GRAPH_RAM,
         Section::Memory,
@@ -163,6 +165,7 @@ fn render_cards(ui: &mut egui::Ui, snap: &Snapshot, current: &mut Section) {
             &title,
             &gpu.name,
             gpu.util_pct,
+            gpu.temp_c,
             hist,
             theme::GRAPH_GPU,
             Section::Gpu(i),
@@ -187,6 +190,7 @@ fn render_cards(ui: &mut egui::Ui, snap: &Snapshot, current: &mut Section) {
             &format!("disk{i}"),
             &format!("Disk {}", short_disk_name(&d.name)),
             &v,
+            d.temp_c,
             &combined_disk(r, w),
             theme::GRAPH_DISK,
             Section::Disk(i),
@@ -203,6 +207,7 @@ fn render_cards(ui: &mut egui::Ui, snap: &Snapshot, current: &mut Section) {
             &format!("net{i}"),
             &iface_label(&snap.system.nets, i),
             &v,
+            0.0,
             &combined_disk(rx, tx),
             theme::GRAPH_NET,
             Section::Network(i),
@@ -266,6 +271,7 @@ fn card_button_pct(
     title: &str,
     subtitle: &str,
     value: f32,
+    temp_c: f32,
     history: &VecDeque<f32>,
     color: egui::Color32,
     section: Section,
@@ -278,7 +284,16 @@ fn card_button_pct(
         format!("{value:.0}%")
     };
     let resp = card_button_inner(
-        ui, id, title, subtitle, &label, history, 100.0, color, selected,
+        ui,
+        id,
+        title,
+        subtitle,
+        &label,
+        temp_label(temp_c),
+        history,
+        100.0,
+        color,
+        selected,
     );
     if resp.clicked() {
         *current = section;
@@ -291,6 +306,7 @@ fn card_button_bps(
     id: &str,
     title: &str,
     value: &str,
+    temp_c: f32,
     history: &VecDeque<f64>,
     color: egui::Color32,
     section: Section,
@@ -312,7 +328,12 @@ fn card_button_bps(
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
                     ui.label(egui::RichText::new(title).strong());
-                    ui.label(egui::RichText::new(value).color(color).size(15.0));
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(value).color(color).size(15.0));
+                        if let Some(t) = temp_label(temp_c) {
+                            ui.label(egui::RichText::new(t).color(theme::TEXT_DIM).size(11.0));
+                        }
+                    });
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.allocate_ui(egui::vec2(80.0, 40.0), |ui| {
@@ -341,12 +362,20 @@ fn card_button_bps(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Format a hwmon temperature for display, or `None` when no sensor reading
+/// is available (`0.0` is the "unavailable" sentinel used across the monitor).
+fn temp_label(temp_c: f32) -> Option<String> {
+    (temp_c.is_finite() && temp_c > 0.0).then(|| format!("({temp_c:.0} °C)"))
+}
+
+#[allow(clippy::too_many_arguments)]
 fn card_button_inner(
     ui: &mut egui::Ui,
     id: &str,
     title: &str,
     subtitle: &str,
     value: &str,
+    temp: Option<String>,
     history: &VecDeque<f32>,
     max: f32,
     color: egui::Color32,
@@ -368,6 +397,9 @@ fn card_button_inner(
                     ui.label(egui::RichText::new(title).strong());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(egui::RichText::new(value).color(color).strong().size(15.0));
+                        if let Some(t) = &temp {
+                            ui.label(egui::RichText::new(t).color(theme::TEXT_DIM).size(11.0));
+                        }
                     });
                 });
                 ui.label(egui::RichText::new(subtitle).color(theme::TEXT_DIM).small());

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use sysinfo::{Disks, Networks, System};
+use sysinfo::{Components, Disks, Networks, System};
 
 #[derive(Clone, Default)]
 pub struct SystemSummary {
@@ -12,6 +12,8 @@ pub struct SystemSummary {
     pub per_core: Vec<f32>,
     pub cpu_brand: String,
     pub cpu_freq_mhz: u64,
+    /// CPU package temperature in °C. `0.0` means no sensor was found.
+    pub cpu_temp_c: f32,
     pub physical_cores: usize,
     pub logical_cores: usize,
     pub ram_total: u64,
@@ -36,6 +38,10 @@ pub struct DiskInfo {
     pub used: u64,
     pub read_bps: f64,
     pub write_bps: f64,
+    /// Drive temperature in °C, read from the device's hwmon sensor.
+    /// `0.0` means no sensor was found (or the kernel `drivetemp` module
+    /// isn't loaded for SATA drives).
+    pub temp_c: f32,
 }
 
 /// Map a partition device path to its parent physical disk.
@@ -101,6 +107,77 @@ fn is_relevant_iface(name: &str) -> bool {
     PREFIXES.iter().any(|p| name.starts_with(p))
 }
 
+/// CPU package temperature in °C, or `0.0` if no suitable sensor is found.
+///
+/// sysinfo labels each hwmon channel; depending on the driver the chip name
+/// may or may not be prefixed, so we match on the channel keyword rather than
+/// the chip. Preference order: whole-package reading (`Package id 0` on Intel,
+/// `Tctl` / `Tdie` on AMD) → hottest individual core → a generic CPU thermal
+/// zone (`cpu_thermal` / `acpitz` on ARM). NVMe channels (`Composite`,
+/// `Sensor N`) are skipped so a hot drive never masquerades as the CPU.
+fn cpu_temperature(components: &Components) -> f32 {
+    let mut package: Option<f32> = None;
+    let mut core: Option<f32> = None;
+    let mut generic: Option<f32> = None;
+    for c in components {
+        let Some(t) = c.temperature() else { continue };
+        if !t.is_finite() || t <= 0.0 {
+            continue;
+        }
+        let l = c.label().to_ascii_lowercase();
+        if l.contains("composite") || l.contains("sensor") || l.contains("nvme") {
+            continue;
+        }
+        if l.contains("package") || l.contains("tctl") || l.contains("tdie") {
+            package = Some(package.map_or(t, |p| p.max(t)));
+        } else if l.starts_with("core ") || l.contains(" core ") {
+            core = Some(core.map_or(t, |h| h.max(t)));
+        } else if l.starts_with("coretemp")
+            || l.starts_with("k10temp")
+            || l.starts_with("zenpower")
+            || l.starts_with("cpu")
+            || l.starts_with("acpitz")
+        {
+            generic = Some(generic.map_or(t, |g| g.max(t)));
+        }
+    }
+    package.or(core).or(generic).unwrap_or(0.0)
+}
+
+/// Drive temperature in °C for a physical disk like `/dev/nvme0n1`, read from
+/// its hwmon sensor under sysfs. Returns `0.0` when unavailable.
+///
+/// The block device exposes its controller's hwmon at
+/// `/sys/block/<dev>/device/hwmon*/temp1_input` (NVMe `Composite`, or the
+/// SATA `drivetemp` reading when that kernel module is loaded).
+fn disk_temperature(name: &str) -> f32 {
+    let dev = name.strip_prefix("/dev/").unwrap_or(name);
+    if dev.is_empty() || dev.contains('/') {
+        return 0.0;
+    }
+    let Ok(entries) = std::fs::read_dir(format!("/sys/block/{dev}/device")) else {
+        return 0.0;
+    };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        let is_hwmon = p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with("hwmon"));
+        if !is_hwmon {
+            continue;
+        }
+        if let Some(t) = std::fs::read_to_string(p.join("temp1_input"))
+            .ok()
+            .and_then(|s| s.trim().parse::<f32>().ok())
+            && t > 0.0
+        {
+            return t / 1000.0;
+        }
+    }
+    0.0
+}
+
 impl SystemSummary {
     /// Build a snapshot of the current system state.
     ///
@@ -109,7 +186,13 @@ impl SystemSummary {
     /// into bytes/second — sysinfo only exposes "bytes since last refresh",
     /// so without this divisor a 10 s sampling interval would show 10× the
     /// actual throughput.
-    pub fn collect(sys: &System, nets: &Networks, disks: &Disks, interval_secs: f64) -> Self {
+    pub fn collect(
+        sys: &System,
+        nets: &Networks,
+        disks: &Disks,
+        components: &Components,
+        interval_secs: f64,
+    ) -> Self {
         let interval_secs = interval_secs.max(0.001);
         let global_cpu = sys.global_cpu_usage();
         let per_core: Vec<f32> = sys.cpus().iter().map(|c| c.cpu_usage()).collect();
@@ -121,6 +204,7 @@ impl SystemSummary {
         let cpu_freq_mhz = sys.cpus().first().map(|c| c.frequency()).unwrap_or(0);
         let logical_cores = sys.cpus().len();
         let physical_cores = sys.physical_core_count().unwrap_or(logical_cores);
+        let cpu_temp_c = cpu_temperature(components);
 
         let ram_total = sys.total_memory();
         let ram_used = sys.used_memory();
@@ -191,6 +275,7 @@ impl SystemSummary {
                 if let Some(fsl) = fs_by_disk.get(&name) {
                     d.fs = fsl.join(", ");
                 }
+                d.temp_c = disk_temperature(&name);
                 d
             })
             .collect();
@@ -205,6 +290,7 @@ impl SystemSummary {
             per_core,
             cpu_brand,
             cpu_freq_mhz,
+            cpu_temp_c,
             physical_cores,
             logical_cores,
             ram_total,

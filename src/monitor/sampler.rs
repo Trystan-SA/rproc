@@ -5,7 +5,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use sysinfo::{
-    Disks, MemoryRefreshKind, Networks, ProcessRefreshKind, ProcessesToUpdate, System, Users,
+    Components, Disks, MemoryRefreshKind, Networks, ProcessRefreshKind, ProcessesToUpdate, System,
+    Users,
 };
 
 use super::{gpu, processes, system};
@@ -85,6 +86,7 @@ fn sampler_loop(out: Arc<Mutex<Arc<Snapshot>>>, refresh_ms: Arc<AtomicU64>) {
     let mut sys = System::new_all();
     let mut nets = Networks::new_with_refreshed_list();
     let mut disks = Disks::new_with_refreshed_list();
+    let mut components = Components::new_with_refreshed_list();
     let mut users = Users::new_with_refreshed_list();
     let mut gpu_collector = gpu::GpuCollector::init();
 
@@ -125,9 +127,10 @@ fn sampler_loop(out: Arc<Mutex<Arc<Snapshot>>>, refresh_ms: Arc<AtomicU64>) {
         );
         nets.refresh(true);
         disks.refresh(true);
+        components.refresh(true);
         users.refresh();
 
-        let summary = system::SystemSummary::collect(&sys, &nets, &disks, delta_secs);
+        let summary = system::SystemSummary::collect(&sys, &nets, &disks, &components, delta_secs);
         let procs = processes::collect(&sys, &users);
         let gpus = gpu_collector.sample();
 

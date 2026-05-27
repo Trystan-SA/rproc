@@ -15,7 +15,7 @@ pub mod storage;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use sysinfo::{Disks, MemoryRefreshKind, Networks, System};
+use sysinfo::{Components, Disks, MemoryRefreshKind, Networks, System};
 
 use crate::monitor::{gpu, system as msystem};
 use storage::{
@@ -40,6 +40,7 @@ pub fn run() -> anyhow::Result<()> {
     let mut sys = System::new_all();
     let mut nets = Networks::new_with_refreshed_list();
     let mut disks = Disks::new_with_refreshed_list();
+    let mut components = Components::new_with_refreshed_list();
     let mut gpu_collector = gpu::GpuCollector::init();
 
     // sysinfo CPU usage needs two refreshes spaced apart to compute deltas.
@@ -56,8 +57,9 @@ pub fn run() -> anyhow::Result<()> {
         sys.refresh_memory_specifics(MemoryRefreshKind::everything());
         nets.refresh(true);
         disks.refresh(true);
+        components.refresh(true);
 
-        let summary = msystem::SystemSummary::collect(&sys, &nets, &disks, delta_secs);
+        let summary = msystem::SystemSummary::collect(&sys, &nets, &disks, &components, delta_secs);
         let gpus = gpu_collector.sample();
 
         let timestamp = SystemTime::now()
