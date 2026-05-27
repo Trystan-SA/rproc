@@ -1,26 +1,38 @@
+use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 // Resolves a process to an icon URI by indexing the freedesktop `.desktop`
 // files on disk and then locating the named icon under the standard
-// `hicolor` theme + `pixmaps` search paths. Built once at startup; per-row
-// lookups are pure hashmap reads.
+// `hicolor` theme + `pixmaps` search paths. The index (~150 files parsed) is
+// built lazily on the first lookup rather than at construction, so it stays
+// off the startup path — it's only needed once the Processes tab is opened.
+// After that, per-row lookups are pure hashmap reads.
 pub struct Resolver {
-    name_to_icon: HashMap<String, String>,
+    name_to_icon: OnceCell<HashMap<String, String>>,
     cache: HashMap<String, Option<String>>,
 }
 
 impl Resolver {
     pub fn new() -> Self {
-        let mut name_to_icon = HashMap::new();
-        for dir in desktop_dirs() {
-            scan_desktop_dir(&dir, &mut name_to_icon);
-        }
         Self {
-            name_to_icon,
+            name_to_icon: OnceCell::new(),
             cache: HashMap::new(),
         }
+    }
+
+    /// The `.desktop` name→icon index, parsed on first access and cached for
+    /// the process lifetime. Takes `&self` (via `OnceCell`) so the cheap
+    /// `has_desktop_entry` check can trigger the build too.
+    fn index(&self) -> &HashMap<String, String> {
+        self.name_to_icon.get_or_init(|| {
+            let mut map = HashMap::new();
+            for dir in desktop_dirs() {
+                scan_desktop_dir(&dir, &mut map);
+            }
+            map
+        })
     }
 
     pub fn icon_uri(&mut self, proc_name: &str, exe_path: &str) -> Option<String> {
@@ -28,7 +40,9 @@ impl Resolver {
             if cand.is_empty() {
                 continue;
             }
-            if let Some(icon) = self.name_to_icon.get(&cand).cloned()
+            // Resolve the desktop→icon name first so the `index()` borrow ends
+            // before `resolve_icon` needs `&mut self` for its cache.
+            if let Some(icon) = self.index().get(&cand).cloned()
                 && let Some(uri) = self.resolve_icon(&icon)
             {
                 return Some(uri);
@@ -45,7 +59,7 @@ impl Resolver {
     pub fn has_desktop_entry(&self, proc_name: &str, exe_path: &str) -> bool {
         desktop_candidates(proc_name, exe_path)
             .iter()
-            .any(|c| !c.is_empty() && self.name_to_icon.contains_key(c))
+            .any(|c| !c.is_empty() && self.index().contains_key(c))
     }
 
     fn resolve_icon(&mut self, icon: &str) -> Option<String> {
@@ -306,7 +320,7 @@ mod tests {
         let mut name_to_icon = HashMap::new();
         name_to_icon.insert("firefox".to_string(), "firefox".to_string());
         let r = Resolver {
-            name_to_icon,
+            name_to_icon: OnceCell::from(name_to_icon),
             cache: HashMap::new(),
         };
         // Matches via the process name even though the exe basename differs.
@@ -320,7 +334,7 @@ mod tests {
         let mut name_to_icon = HashMap::new();
         name_to_icon.insert("code".to_string(), "vscode".to_string());
         let r = Resolver {
-            name_to_icon,
+            name_to_icon: OnceCell::from(name_to_icon),
             cache: HashMap::new(),
         };
         // "code-insiders" has no direct entry, but its stem "code" does.

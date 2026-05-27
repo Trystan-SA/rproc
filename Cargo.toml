@@ -21,6 +21,10 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 strip = true
+# Drop unwinding: a monitor has nothing to catch a panic for, and abort sheds
+# the landing-pad code + unwind tables from the binary (smaller image, less
+# mapped memory).
+panic = "abort"
 
 [package.metadata.deb]
 maintainer = "Trystan Sarrade <trystan.sarrade@somanyways.co>"
