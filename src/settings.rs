@@ -117,10 +117,7 @@ fn config_path() -> std::io::Result<PathBuf> {
                 .map(|h| PathBuf::from(h).join(".config"))
         })
         .ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "no HOME or XDG_CONFIG_HOME",
-            )
+            std::io::Error::new(std::io::ErrorKind::NotFound, "no HOME or XDG_CONFIG_HOME")
         })?;
     let dir = base.join("rproc");
     std::fs::create_dir_all(&dir)?;
