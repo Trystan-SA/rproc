@@ -37,7 +37,11 @@ pub fn run() -> anyhow::Result<()> {
     let hist_path = storage::history_path()?;
     let mut ring = RingBuffer::open_writer(&hist_path)?;
 
-    let mut sys = System::new_all();
+    // This process only ever reads CPU, memory, network, disk and component
+    // metrics — never the process table. `System::new()` skips the costly
+    // initial scan of every PID's cmdline/exe/environ that `new_all()` does
+    // and would otherwise keep resident for the daemon's whole lifetime.
+    let mut sys = System::new();
     let mut nets = Networks::new_with_refreshed_list();
     let mut disks = Disks::new_with_refreshed_list();
     let mut components = Components::new_with_refreshed_list();

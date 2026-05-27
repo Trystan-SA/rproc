@@ -19,6 +19,20 @@ pub const WARN: Color32 = Color32::from_rgb(0xFF, 0xC4, 0x4D);
 pub const ERR: Color32 = Color32::from_rgb(0xFF, 0x6B, 0x6B);
 
 pub fn apply(ctx: &egui::Context) {
+    // Drop the bundled emoji fonts. They're the heaviest blobs in the default
+    // set (~1.5 MB of raw glyph data the font system would otherwise keep
+    // parsed in memory) and rproc renders no emoji. Removing by name is a
+    // no-op if egui ever renames them, so it can't accidentally blank the
+    // Latin text fonts (Hack / Ubuntu-Light), which stay untouched.
+    let mut fonts = egui::FontDefinitions::default();
+    for emoji in ["NotoEmoji-Regular", "emoji-icon-font"] {
+        fonts.font_data.remove(emoji);
+        for family in fonts.families.values_mut() {
+            family.retain(|name| name != emoji);
+        }
+    }
+    ctx.set_fonts(fonts);
+
     let mut visuals = Visuals::dark();
     visuals.panel_fill = BG;
     visuals.window_fill = BG;

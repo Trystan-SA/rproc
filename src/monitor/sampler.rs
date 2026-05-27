@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -51,10 +51,18 @@ pub struct Sampler {
     // The sampler thread builds its working copy locally and only takes the
     // mutex briefly at the end of each tick to swap the published Arc.
     inner: Arc<Mutex<Arc<Snapshot>>>,
+    // Set by the UI each frame: true only while the Processes tab is showing.
+    // The full process table (name + exe + full cmdline + user, ×N hundred
+    // PIDs) is only built while it's actually on screen — the app opens on the
+    // Performance tab, so at startup this table is never collected at all.
+    processes_active: Arc<AtomicBool>,
 }
 
 impl Sampler {
     pub fn start(refresh_ms: Arc<AtomicU64>) -> Self {
+        // Default off: the app opens on Performance, so the process table stays
+        // empty until the user first visits the Processes tab.
+        let processes_active = Arc::new(AtomicBool::new(false));
         // Pre-fill the rolling history from the daemon's on-disk ring-buffer
         // so the user sees up to the last 60 s of activity as soon as the
         // window opens — even if rproc was just relaunched. CPU per-core
@@ -70,20 +78,41 @@ impl Sampler {
         let inner = Arc::new(Mutex::new(Arc::new(initial)));
 
         let inner_t = inner.clone();
+        let active_t = processes_active.clone();
         thread::Builder::new()
             .name("rproc-sampler".into())
-            .spawn(move || sampler_loop(inner_t, refresh_ms))
+            .spawn(move || sampler_loop(inner_t, refresh_ms, active_t))
             .expect("spawn sampler");
-        Self { inner }
+        Self {
+            inner,
+            processes_active,
+        }
     }
 
     pub fn snapshot(&self) -> Arc<Snapshot> {
         self.inner.lock().unwrap().clone()
     }
+
+    /// Tell the sampler whether the process table is currently on screen.
+    /// When false, the next tick skips the per-PID refresh and publishes an
+    /// empty process list, keeping that memory unallocated.
+    pub fn set_processes_active(&self, on: bool) {
+        self.processes_active.store(on, Ordering::Relaxed);
+    }
 }
 
-fn sampler_loop(out: Arc<Mutex<Arc<Snapshot>>>, refresh_ms: Arc<AtomicU64>) {
-    let mut sys = System::new_all();
+fn sampler_loop(
+    out: Arc<Mutex<Arc<Snapshot>>>,
+    refresh_ms: Arc<AtomicU64>,
+    processes_active: Arc<AtomicBool>,
+) {
+    // `System::new()` + a CPU refresh avoids `new_all()`'s upfront scan of
+    // every PID's cmdline/exe/environ. The loop below repopulates the process
+    // table each tick with a narrow `ProcessRefreshKind` (no environ), so the
+    // full initial read was pure waste. The CPU refresh here is just to size
+    // `per_core_cpu` correctly below; the delta-bearing refresh stays further down.
+    let mut sys = System::new();
+    sys.refresh_cpu_usage();
     let mut nets = Networks::new_with_refreshed_list();
     let mut disks = Disks::new_with_refreshed_list();
     let mut components = Components::new_with_refreshed_list();
@@ -114,24 +143,35 @@ fn sampler_loop(out: Arc<Mutex<Arc<Snapshot>>>, refresh_ms: Arc<AtomicU64>) {
 
         sys.refresh_cpu_usage();
         sys.refresh_memory_specifics(MemoryRefreshKind::everything());
-        sys.refresh_processes_specifics(
-            ProcessesToUpdate::All,
-            true,
-            ProcessRefreshKind::nothing()
-                .with_cpu()
-                .with_memory()
-                .with_disk_usage()
-                .with_user(sysinfo::UpdateKind::OnlyIfNotSet)
-                .with_cmd(sysinfo::UpdateKind::OnlyIfNotSet)
-                .with_exe(sysinfo::UpdateKind::OnlyIfNotSet),
-        );
+
+        // Only walk the process table while the Processes tab is on screen.
+        // Skipping it leaves sysinfo's per-PID map empty (we start from
+        // `System::new()`), so the cmdline/exe/user strings for hundreds of
+        // processes are never allocated until the user actually asks to see them.
+        let want_procs = processes_active.load(Ordering::Relaxed);
+        let procs = if want_procs {
+            sys.refresh_processes_specifics(
+                ProcessesToUpdate::All,
+                true,
+                ProcessRefreshKind::nothing()
+                    .with_cpu()
+                    .with_memory()
+                    .with_disk_usage()
+                    .with_user(sysinfo::UpdateKind::OnlyIfNotSet)
+                    .with_cmd(sysinfo::UpdateKind::OnlyIfNotSet)
+                    .with_exe(sysinfo::UpdateKind::OnlyIfNotSet),
+            );
+            users.refresh();
+            processes::collect(&sys, &users)
+        } else {
+            Vec::new()
+        };
+
         nets.refresh(true);
         disks.refresh(true);
         components.refresh(true);
-        users.refresh();
 
         let summary = system::SystemSummary::collect(&sys, &nets, &disks, &components, delta_secs);
-        let procs = processes::collect(&sys, &users);
         let gpus = gpu_collector.sample();
 
         push_capped(
@@ -248,7 +288,24 @@ fn sampler_loop(out: Arc<Mutex<Arc<Snapshot>>>, refresh_ms: Arc<AtomicU64>) {
                 .clamp(MIN_REFRESH_MS, MAX_REFRESH_MS),
         );
         if elapsed < target {
-            thread::sleep(target - elapsed);
+            let remaining = target - elapsed;
+            // If we just published a process list, nothing's waiting on us —
+            // sleep the whole interval. Otherwise (Processes tab not showing)
+            // poll in short slices so opening the tab mid-sleep wakes us within
+            // ~one slice instead of up to a full refresh interval (1 s default).
+            // The process scan itself is only a few ms; the felt latency was
+            // purely this sleep. Polling a relaxed atomic every 40 ms is free.
+            if want_procs {
+                thread::sleep(remaining);
+            } else {
+                let slice = Duration::from_millis(40);
+                let mut slept = Duration::ZERO;
+                while slept < remaining && !processes_active.load(Ordering::Relaxed) {
+                    let nap = slice.min(remaining - slept);
+                    thread::sleep(nap);
+                    slept += nap;
+                }
+            }
         }
     }
 }

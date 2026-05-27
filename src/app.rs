@@ -45,6 +45,11 @@ impl eframe::App for App {
         let refresh = self.settings.refresh_ms().max(50);
         ctx.request_repaint_after(std::time::Duration::from_millis(refresh / 2));
 
+        // Let the sampler skip the costly per-PID walk unless its output is
+        // actually on screen. Takes effect on the next sampler tick.
+        self.sampler
+            .set_processes_active(self.tab == Tab::Processes);
+
         let snap = self.sampler.snapshot();
 
         // Below this window width the sidebar collapses to icons-only so the
