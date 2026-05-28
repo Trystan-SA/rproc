@@ -31,6 +31,7 @@ maintainer = "Trystan Sarrade <trystan.sarrade@somanyways.co>"
 section = "utils"
 priority = "optional"
 depends = "$auto"
+maintainer-scripts = "packaging/deb-scripts"
 extended-description = """\
 rproc is a resource and process monitor for Linux, inspired by the
 Windows 11 Task Manager. It shows live CPU, memory, disk, network and
@@ -57,3 +58,16 @@ assets = [
     { source = "README.md", dest = "/usr/share/doc/rproc/README.md", mode = "644", doc = true },
 ]
 auto-req = "auto"
+# Enable the user service for everyone at install, mirror the .deb behaviour.
+# Per-user `systemctl --user disable rprocd` (e.g. from the Settings UI) still
+# masks this, so opting out keeps working.
+post_install_script = """
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl --global enable rprocd.service >/dev/null 2>&1 || true
+fi
+"""
+pre_uninstall_script = """
+if [ "$1" = "0" ] && command -v systemctl >/dev/null 2>&1; then
+    systemctl --global disable rprocd.service >/dev/null 2>&1 || true
+fi
+"""

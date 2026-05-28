@@ -84,15 +84,19 @@ it running). You can also start it on its own:
 rproc --daemon
 ```
 
-Packages install a systemd **user** unit that you can enable to start the
-sampler at login:
+Packages install a systemd **user** unit and enable it for every user at
+install time, so the sampler is already running when you open rproc for
+the first time after a fresh boot (the binary and its libraries are
+warm in the page cache, which is the bulk of the first-launch cost).
+You can opt out from the Settings page (uncheck "Launch at login") or
+on the command line:
 
 ```bash
-systemctl --user enable --now rprocd
+systemctl --user disable --now rprocd
 ```
 
-> Installing from source instead? Copy the unit first:
-> `mkdir -p ~/.config/systemd/user && cp packaging/rprocd.service ~/.config/systemd/user/`
+> Installing from source instead? Copy the unit and enable it yourself:
+> `mkdir -p ~/.config/systemd/user && cp packaging/rprocd.service ~/.config/systemd/user/ && systemctl --user enable --now rprocd`
 
 ## Building packages
 

@@ -18,6 +18,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{Components, Disks, MemoryRefreshKind, Networks, System};
 
 use crate::monitor::{gpu, system as msystem};
+use crate::settings::Settings;
 use storage::{
     DiskSlot, GpuSlot, MAX_DISKS, MAX_GPUS, MAX_NETS, NetSlot, RingBuffer, Sample, name_to_bytes,
 };
@@ -27,6 +28,15 @@ use storage::{
 const SAMPLE_PERIOD: Duration = Duration::from_secs(1);
 
 pub fn run() -> anyhow::Result<()> {
+    // The user can opt out of background sampling from the GUI; that
+    // choice is persisted to the settings file. systemd still launches
+    // `rproc --daemon` at every login from the unit shipped by the
+    // package, so honour the toggle here — otherwise the daemon would
+    // run regardless of the persisted preference.
+    if !Settings::load().daemon_enabled() {
+        return Ok(());
+    }
+
     let pid_path = pidfile::pid_path()?;
     let _lock = match pidfile::PidFile::acquire(&pid_path)? {
         Some(lock) => lock,

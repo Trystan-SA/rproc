@@ -15,6 +15,7 @@ pub enum Tab {
 pub struct App {
     sampler: Sampler,
     pub tab: Tab,
+    prev_tab: Tab,
     pub settings: Settings,
     pub processes: ui::processes::State,
     pub performance: ui::performance::State,
@@ -28,6 +29,7 @@ impl App {
         Self {
             sampler: Sampler::start(settings.refresh_handle()),
             tab: Tab::Performance,
+            prev_tab: Tab::Performance,
             settings,
             processes: ui::processes::State::new(),
             performance: ui::performance::State::default(),
@@ -73,6 +75,15 @@ impl eframe::App for App {
             .show(ctx, |ui| {
                 ui::sidebar::show(ui, &mut self.tab, compact_sidebar);
             });
+
+        // Settings shells out to `systemctl --user` to populate the
+        // autostart toggle — those probes are cached per-frame, but the
+        // cache must be invalidated when the user (re-)enters the tab so
+        // external changes (e.g. via a terminal) are picked up.
+        if self.tab == Tab::Settings && self.prev_tab != Tab::Settings {
+            self.settings_state.invalidate();
+        }
+        self.prev_tab = self.tab;
 
         egui::CentralPanel::default()
             .frame(

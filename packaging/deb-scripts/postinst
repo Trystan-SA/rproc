@@ -1,0 +1,19 @@
+#!/bin/sh
+# Enable the rprocd user service for every user (including future ones).
+# `--global` writes symlinks under /etc/systemd/user/ that user sessions
+# inherit at login; the GUI opt-out goes through `systemctl --user mask`
+# (not `disable`, which would not touch the global symlinks), so the
+# per-user mask shadows this default-on state.
+set -e
+
+case "$1" in
+    configure)
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl --global enable rprocd.service >/dev/null 2>&1 || true
+        fi
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

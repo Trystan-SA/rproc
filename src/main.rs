@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 mod app;
+mod autostart;
 mod daemon;
 mod monitor;
 mod settings;
