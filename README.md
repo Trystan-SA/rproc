@@ -34,6 +34,15 @@ sudo apt install ./rproc_<version>_amd64.deb
 sudo dnf install ./rproc-<version>-1.x86_64.rpm
 ```
 
+### Arch Linux (AUR)
+
+```bash
+yay -S rproc-bin       # or: paru -S rproc-bin
+```
+
+The [`rproc-bin`](https://aur.archlinux.org/packages/rproc-bin) package
+wraps the prebuilt release tarball, so no Rust toolchain is needed.
+
 ### Flatpak
 
 ```bash
@@ -124,6 +133,7 @@ Single-command targets via the included `Makefile`:
 ```bash
 make deb               # build a .deb  -> target/debian/
 make rpm               # build an .rpm -> target/generate-rpm/
+make aur               # build rproc-bin from packaging/aur/PKGBUILD (needs makepkg)
 make flatpak           # build a local .flatpak bundle
 make flatpak-install   # build + install the Flatpak for the current user
 ```

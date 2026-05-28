@@ -169,3 +169,54 @@ jobs:
           files: dist/*
           fail_on_unmatched_files: false
           generate_release_notes: true
+
+  # Push an updated PKGBUILD to the AUR. Requires the following repo
+  # secrets (Settings -> Secrets and variables -> Actions):
+  #   AUR_USERNAME, AUR_EMAIL, AUR_SSH_PRIVATE_KEY (matching pubkey
+  #   uploaded to https://aur.archlinux.org/account/<user>).
+  # The AUR package "rproc-bin" must already exist.
+  publish-aur:
+    needs: release
+    if: ${{ needs.release.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download tarball artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: rproc-tarball
+          path: dist
+
+      - name: Refresh PKGBUILD
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          pkgbuild=packaging/aur/PKGBUILD
+          declare -A sums=(
+            [bin]=$(sha256sum "dist/rproc-${GITHUB_REF_NAME}-linux-x86_64.tar.gz" | awk '{print $1}')
+            [desktop]=$(sha256sum packaging/io.github.trystan_sa.rproc.desktop | awk '{print $1}')
+            [metainfo]=$(sha256sum packaging/io.github.trystan_sa.rproc.metainfo.xml | awk '{print $1}')
+            [svg]=$(sha256sum packaging/icons/hicolor/scalable/apps/io.github.trystan_sa.rproc.svg | awk '{print $1}')
+            [service]=$(sha256sum packaging/rprocd.system.service | awk '{print $1}')
+            [license]=$(sha256sum LICENSE | awk '{print $1}')
+          )
+          sed -i \
+            -e "s/^pkgver=.*/pkgver=${version}/" \
+            -e "s/^pkgrel=.*/pkgrel=1/" \
+            "$pkgbuild"
+          for tag in "${!sums[@]}"; do
+            sed -i -E "s|'[0-9a-f]{64}' # ${tag}\$|'${sums[$tag]}' # ${tag}|" "$pkgbuild"
+          done
+          cat "$pkgbuild"
+
+      - name: Publish to AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v2.7.2
+        with:
+          pkgname: rproc-bin
+          pkgbuild: packaging/aur/PKGBUILD
+          commit_username: ${{ secrets.AUR_USERNAME }}
+          commit_email: ${{ secrets.AUR_EMAIL }}
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "Update to ${{ github.ref_name }}"

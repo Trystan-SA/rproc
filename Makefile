@@ -1,7 +1,7 @@
 VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 APP_ID  := io.github.trystan_sa.rproc
 
-.PHONY: help flatpak flatpak-install deb rpm clean release
+.PHONY: help flatpak flatpak-install deb rpm aur clean release
 
 help:
 	@echo "rproc packaging targets:"
@@ -9,6 +9,7 @@ help:
 	@echo "  make flatpak-install build + install for the current user"
 	@echo "  make deb             build a .deb (target/debian/)"
 	@echo "  make rpm             build an .rpm (target/generate-rpm/)"
+	@echo "  make aur             build the AUR rproc-bin package locally with makepkg"
 	@echo "  make release         interactive: bump version, tag, push -> CI publishes release"
 	@echo "  make clean           remove build artefacts"
 
@@ -55,6 +56,17 @@ rpm:
 	strip target/release/rproc
 	cargo generate-rpm
 
+# --- AUR --------------------------------------------------------------------
+# Builds rproc-bin from packaging/aur/PKGBUILD using the *currently
+# published* GitHub release for the version pinned in the PKGBUILD.
+# Run this from an Arch host (or `pacman -S devtools` on a derivative)
+# with makepkg available.
+
+aur:
+	@command -v makepkg >/dev/null 2>&1 || { \
+		echo "makepkg not found. Install pacman/base-devel (Arch) or pkg from your distro."; exit 1; }
+	cd packaging/aur && makepkg -f --clean
+
 # --- Release flow -----------------------------------------------------------
 # Interactive. Prompts for the bump kind, bumps version, commits, tags
 # vX.Y.Z and pushes — the Release workflow then builds and publishes
@@ -68,4 +80,12 @@ release:
 clean:
 	rm -rf build rproc-*.flatpak \
 	       target/debian target/generate-rpm \
-	       packaging/flatpak/cargo-sources.json
+	       packaging/flatpak/cargo-sources.json \
+	       packaging/aur/src packaging/aur/pkg \
+	       packaging/aur/rproc-bin-*.pkg.tar.* \
+	       packaging/aur/rproc-*.tar.gz \
+	       packaging/aur/rproc-*.desktop \
+	       packaging/aur/rproc-*.metainfo.xml \
+	       packaging/aur/rproc-*.svg \
+	       packaging/aur/rprocd-*.service \
+	       packaging/aur/LICENSE-*
