@@ -79,8 +79,7 @@ pub fn show(
                     for s in list {
                         ui.horizontal(|ui| {
                             ui.label(
-                                egui::RichText::new(format!("{}  ", s.name))
-                                    .color(theme::TEXT),
+                                egui::RichText::new(format!("{}  ", s.name)).color(theme::TEXT),
                             );
                             ui.label(
                                 egui::RichText::new(format!("({})", s.pid))

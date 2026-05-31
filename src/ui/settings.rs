@@ -130,7 +130,7 @@ pub fn show(ui: &mut egui::Ui, _state: &mut State, settings: &Settings) {
             ui.label(
                 egui::RichText::new(
                     "Record the heaviest processes behind each point on the CPU, \
-                     memory and disk graphs. When on, hover any point on those \
+                     memory, disk and GPU graphs. When on, hover any point on those \
                      graphs to see the top processes for that moment. This makes \
                      the sampler scan the full process list every tick, so it's \
                      off by default to keep the core lightweight. History is kept \
@@ -155,7 +155,10 @@ pub fn show(ui: &mut egui::Ui, _state: &mut State, settings: &Settings) {
 
         ui.add_space(6.0);
         let (status, color) = if enabled {
-            ("Attribution on — hover the CPU / Memory / Disk graphs", theme::ACCENT)
+            (
+                "Attribution on — hover the CPU / Memory / Disk / GPU graphs",
+                theme::ACCENT,
+            )
         } else {
             ("Attribution off", theme::TEXT_DIM)
         };
