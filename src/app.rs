@@ -24,9 +24,9 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(settings: Settings) -> Self {
+    pub fn new(settings: Settings, ctx: &egui::Context) -> Self {
         Self {
-            sampler: Sampler::start(settings.refresh_handle()),
+            sampler: Sampler::start(settings.refresh_handle(), ctx.clone()),
             tab: Tab::Performance,
             settings,
             processes: ui::processes::State::new(),

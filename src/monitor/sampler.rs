@@ -24,7 +24,10 @@ pub struct Snapshot {
     pub sample_interval_ms: u64,
     pub system: system::SystemSummary,
     pub history: History,
-    pub processes: Vec<processes::ProcInfo>,
+    // Arc so the per-tick publish refcount-bumps instead of deep-cloning the
+    // list, and so the last sample can be retained cheaply while the tab is off
+    // screen (see `sampler_loop`).
+    pub processes: Arc<Vec<processes::ProcInfo>>,
     pub gpus: Vec<gpu::GpuInfo>,
 }
 
@@ -59,7 +62,7 @@ pub struct Sampler {
 }
 
 impl Sampler {
-    pub fn start(refresh_ms: Arc<AtomicU64>) -> Self {
+    pub fn start(refresh_ms: Arc<AtomicU64>, ctx: egui::Context) -> Self {
         // Default off: the app opens on Performance, so the process table stays
         // empty until the user first visits the Processes tab.
         let processes_active = Arc::new(AtomicBool::new(false));
@@ -81,7 +84,7 @@ impl Sampler {
         let active_t = processes_active.clone();
         thread::Builder::new()
             .name("rproc-sampler".into())
-            .spawn(move || sampler_loop(inner_t, refresh_ms, active_t))
+            .spawn(move || sampler_loop(inner_t, refresh_ms, active_t, ctx))
             .expect("spawn sampler");
         Self {
             inner,
@@ -94,8 +97,8 @@ impl Sampler {
     }
 
     /// Tell the sampler whether the process table is currently on screen.
-    /// When false, the next tick skips the per-PID refresh and publishes an
-    /// empty process list, keeping that memory unallocated.
+    /// When false, the next tick skips the per-PID refresh; the last collected
+    /// list is retained so reopening the tab shows it immediately.
     pub fn set_processes_active(&self, on: bool) {
         self.processes_active.store(on, Ordering::Relaxed);
     }
@@ -105,6 +108,7 @@ fn sampler_loop(
     out: Arc<Mutex<Arc<Snapshot>>>,
     refresh_ms: Arc<AtomicU64>,
     processes_active: Arc<AtomicBool>,
+    ctx: egui::Context,
 ) {
     // `System::new()` + a CPU refresh avoids `new_all()`'s upfront scan of
     // every PID's cmdline/exe/environ. The loop below repopulates the process
@@ -148,8 +152,10 @@ fn sampler_loop(
         // Skipping it leaves sysinfo's per-PID map empty (we start from
         // `System::new()`), so the cmdline/exe/user strings for hundreds of
         // processes are never allocated until the user actually asks to see them.
+        // When off screen we keep the previous list (don't clear it) so the tab
+        // paints its last sample instantly on reopen.
         let want_procs = processes_active.load(Ordering::Relaxed);
-        let procs = if want_procs {
+        if want_procs {
             sys.refresh_processes_specifics(
                 ProcessesToUpdate::All,
                 true,
@@ -162,10 +168,8 @@ fn sampler_loop(
                     .with_exe(sysinfo::UpdateKind::OnlyIfNotSet),
             );
             users.refresh();
-            processes::collect(&sys, &users)
-        } else {
-            Vec::new()
-        };
+            working.processes = Arc::new(processes::collect(&sys, &users));
+        }
 
         nets.refresh(true);
         disks.refresh(true);
@@ -267,7 +271,6 @@ fn sampler_loop(
         }
 
         working.system = summary;
-        working.processes = procs;
         working.gpus = gpus;
         working.ready = true;
         // Surface the *current* sampling period so plot widgets can label
@@ -280,6 +283,11 @@ fn sampler_loop(
         // Publish: one Snapshot clone per tick (≈1 Hz at default settings)
         // instead of one per UI frame.
         *out.lock().unwrap() = Arc::new(working.clone());
+        // Wake the UI now that fresh data is published, rather than letting it
+        // wait for its own repaint timer (which is tied to the sample interval,
+        // so a 10 s rate would otherwise hide a just-collected process list for
+        // up to that long after the tab opens).
+        ctx.request_repaint();
 
         let elapsed = now.elapsed();
         let target = Duration::from_millis(
