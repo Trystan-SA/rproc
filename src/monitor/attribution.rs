@@ -18,14 +18,17 @@ use sysinfo::System;
 /// How many heaviest processes we keep per resource, per sample.
 pub const TOP_N: usize = 5;
 
-/// One process's share of a single resource at one sample. The unit of `value`
-/// depends on which list it lives in: CPU and RAM are percentages, disk is
-/// bytes/sec.
+/// One process's share of a single resource at one sample. `value` is the
+/// quantity we rank by, its unit depending on the list: CPU and RAM are
+/// percentages, disk is bytes/sec. `bytes` carries the absolute size when one
+/// is meaningful (RAM: resident memory) so the UI can show e.g. "1.2 GB (5%)";
+/// it is 0 for CPU and disk where no absolute size applies.
 #[derive(Clone)]
 pub struct ProcShare {
     pub pid: u32,
     pub name: String,
     pub value: f32,
+    pub bytes: u64,
 }
 
 /// Top-N heaviest processes per resource captured for one history sample.
@@ -69,33 +72,37 @@ pub fn collect(sys: &System, delta_secs: f64) -> Attribution {
         let pid = pid.as_u32();
         let name = p.name().to_string_lossy();
 
+        // Every process is a candidate (including idle ones) so the lists
+        // always fill to TOP_N; the ranking decides what surfaces.
         let cpu_pct = p.cpu_usage() / cores;
-        if cpu_pct > 0.0 {
-            cpu.push(ProcShare {
-                pid,
-                name: name.clone().into_owned(),
-                value: cpu_pct,
-            });
-        }
+        cpu.push(ProcShare {
+            pid,
+            name: name.clone().into_owned(),
+            value: cpu_pct,
+            bytes: 0,
+        });
 
         let mem = p.memory();
-        if mem > 0 && ram_total > 0 {
-            ram.push(ProcShare {
-                pid,
-                name: name.clone().into_owned(),
-                value: (mem as f32 / ram_total as f32) * 100.0,
-            });
-        }
+        let mem_pct = if ram_total > 0 {
+            (mem as f32 / ram_total as f32) * 100.0
+        } else {
+            0.0
+        };
+        ram.push(ProcShare {
+            pid,
+            name: name.clone().into_owned(),
+            value: mem_pct,
+            bytes: mem,
+        });
 
         let io = p.disk_usage();
         let bps = (io.read_bytes + io.written_bytes) as f64 / dt;
-        if bps > 0.0 {
-            disk.push(ProcShare {
-                pid,
-                name: name.into_owned(),
-                value: bps as f32,
-            });
-        }
+        disk.push(ProcShare {
+            pid,
+            name: name.into_owned(),
+            value: bps as f32,
+            bytes: 0,
+        });
     }
 
     Attribution {
@@ -105,10 +112,9 @@ pub fn collect(sys: &System, delta_secs: f64) -> Attribution {
     }
 }
 
-/// Keep the `TOP_N` highest-value shares, descending. Only non-zero
-/// contributors ever reach here (the collector skips zeros), so this is purely
-/// a ranking cut — equivalently the "processes using more than ~0" view, which
-/// a configurable threshold could tighten later.
+/// Keep the `TOP_N` highest-value shares, descending. Every process is a
+/// candidate, so on any real system this always yields a full `TOP_N` rows
+/// (a future threshold setting could prune low contributors here instead).
 fn top_n(mut v: Vec<ProcShare>) -> Vec<ProcShare> {
     v.sort_unstable_by(|a, b| {
         b.value
@@ -128,6 +134,7 @@ mod tests {
             pid,
             name: format!("p{pid}"),
             value,
+            bytes: 0,
         }
     }
 

@@ -9,7 +9,7 @@
 
 use std::collections::VecDeque;
 
-use crate::monitor::attribution::Attribution;
+use crate::monitor::attribution::{Attribution, ProcShare};
 use crate::theme;
 use crate::ui::widgets;
 
@@ -89,7 +89,7 @@ pub fn show(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
                                     ui.label(
-                                        egui::RichText::new(format_value(kind, s.value))
+                                        egui::RichText::new(format_value(kind, s))
                                             .color(theme::ACCENT)
                                             .strong(),
                                     );
@@ -102,15 +102,19 @@ pub fn show(
         });
 }
 
-fn format_value(kind: Kind, v: f32) -> String {
+fn format_value(kind: Kind, s: &ProcShare) -> String {
     match kind {
-        Kind::Cpu | Kind::Ram => {
-            if v < 10.0 {
-                format!("{v:.1}%")
-            } else {
-                format!("{v:.0}%")
-            }
-        }
-        Kind::Disk => widgets::format_bps(v as f64),
+        Kind::Cpu => fmt_pct(s.value),
+        // RAM shows the absolute footprint plus its share of total memory.
+        Kind::Ram => format!("{} ({})", widgets::format_bytes(s.bytes), fmt_pct(s.value)),
+        Kind::Disk => widgets::format_bps(s.value as f64),
+    }
+}
+
+fn fmt_pct(v: f32) -> String {
+    if v < 10.0 {
+        format!("{v:.1}%")
+    } else {
+        format!("{v:.0}%")
     }
 }
