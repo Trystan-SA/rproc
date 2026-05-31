@@ -26,7 +26,7 @@ pub struct App {
 impl App {
     pub fn new(settings: Settings) -> Self {
         Self {
-            sampler: Sampler::start(settings.refresh_handle()),
+            sampler: Sampler::start(settings.refresh_handle(), settings.attribution_handle()),
             tab: Tab::Performance,
             settings,
             processes: ui::processes::State::new(),

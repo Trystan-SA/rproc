@@ -9,7 +9,7 @@ use sysinfo::{
     Users,
 };
 
-use super::{gpu, processes, system};
+use super::{attribution, gpu, processes, system};
 use crate::settings::{MAX_REFRESH_MS, MIN_REFRESH_MS};
 
 const HISTORY_LEN: usize = 60;
@@ -42,6 +42,10 @@ pub struct History {
     pub disk_write_bps: HashMap<String, VecDeque<f64>>,
     pub gpu_util: Vec<VecDeque<f32>>,
     pub gpu_mem_pct: Vec<VecDeque<f32>>,
+    /// Optional per-sample top-N process attribution, aligned with the other
+    /// series (newest on the right). Empty unless the attribution feature is
+    /// enabled; never persisted to disk. See [`super::attribution`].
+    pub attribution: VecDeque<super::attribution::Attribution>,
 }
 
 pub struct Sampler {
@@ -59,7 +63,7 @@ pub struct Sampler {
 }
 
 impl Sampler {
-    pub fn start(refresh_ms: Arc<AtomicU64>) -> Self {
+    pub fn start(refresh_ms: Arc<AtomicU64>, attribution_enabled: Arc<AtomicBool>) -> Self {
         // Default off: the app opens on Performance, so the process table stays
         // empty until the user first visits the Processes tab.
         let processes_active = Arc::new(AtomicBool::new(false));
@@ -81,7 +85,7 @@ impl Sampler {
         let active_t = processes_active.clone();
         thread::Builder::new()
             .name("rproc-sampler".into())
-            .spawn(move || sampler_loop(inner_t, refresh_ms, active_t))
+            .spawn(move || sampler_loop(inner_t, refresh_ms, active_t, attribution_enabled))
             .expect("spawn sampler");
         Self {
             inner,
@@ -105,6 +109,7 @@ fn sampler_loop(
     out: Arc<Mutex<Arc<Snapshot>>>,
     refresh_ms: Arc<AtomicU64>,
     processes_active: Arc<AtomicBool>,
+    attribution_enabled: Arc<AtomicBool>,
 ) {
     // `System::new()` + a CPU refresh avoids `new_all()`'s upfront scan of
     // every PID's cmdline/exe/environ. The loop below repopulates the process
@@ -148,21 +153,37 @@ fn sampler_loop(
         // Skipping it leaves sysinfo's per-PID map empty (we start from
         // `System::new()`), so the cmdline/exe/user strings for hundreds of
         // processes are never allocated until the user actually asks to see them.
+        // The per-PID scan is the sampler's most expensive operation, so it
+        // runs only when something on screen needs it: the Processes tab
+        // (full table) or the optional graph-attribution feature (top-N only).
         let want_procs = processes_active.load(Ordering::Relaxed);
-        let procs = if want_procs {
-            sys.refresh_processes_specifics(
-                ProcessesToUpdate::All,
-                true,
-                ProcessRefreshKind::nothing()
-                    .with_cpu()
-                    .with_memory()
-                    .with_disk_usage()
-                    .with_user(sysinfo::UpdateKind::OnlyIfNotSet)
+        let want_attr = attribution_enabled.load(Ordering::Relaxed);
+        let mut attribution = attribution::Attribution::default();
+        let procs = if want_procs || want_attr {
+            // Attribution needs only pid/name + CPU/mem/disk; the Processes
+            // table additionally wants the string-heavy cmdline/exe/user. Pull
+            // the wide set only when the table is actually showing.
+            let kind = ProcessRefreshKind::nothing()
+                .with_cpu()
+                .with_memory()
+                .with_disk_usage();
+            let kind = if want_procs {
+                kind.with_user(sysinfo::UpdateKind::OnlyIfNotSet)
                     .with_cmd(sysinfo::UpdateKind::OnlyIfNotSet)
-                    .with_exe(sysinfo::UpdateKind::OnlyIfNotSet),
-            );
-            users.refresh();
-            processes::collect(&sys, &users)
+                    .with_exe(sysinfo::UpdateKind::OnlyIfNotSet)
+            } else {
+                kind
+            };
+            sys.refresh_processes_specifics(ProcessesToUpdate::All, true, kind);
+            if want_attr {
+                attribution = attribution::collect(&sys, delta_secs);
+            }
+            if want_procs {
+                users.refresh();
+                processes::collect(&sys, &users)
+            } else {
+                Vec::new()
+            }
         } else {
             Vec::new()
         };
@@ -266,6 +287,14 @@ fn sampler_loop(
             }
         }
 
+        if want_attr {
+            push_capped(&mut working.history.attribution, attribution, HISTORY_LEN);
+        } else if !working.history.attribution.is_empty() {
+            // Feature toggled off — drop accumulated shares so the hover overlay
+            // stops surfacing stale attribution.
+            working.history.attribution.clear();
+        }
+
         working.system = summary;
         working.processes = procs;
         working.gpus = gpus;
@@ -295,7 +324,7 @@ fn sampler_loop(
             // ~one slice instead of up to a full refresh interval (1 s default).
             // The process scan itself is only a few ms; the felt latency was
             // purely this sleep. Polling a relaxed atomic every 40 ms is free.
-            if want_procs {
+            if want_procs || want_attr {
                 thread::sleep(remaining);
             } else {
                 let slice = Duration::from_millis(40);

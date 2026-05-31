@@ -1,3 +1,4 @@
+pub mod attribution;
 pub mod icons;
 pub mod performance;
 pub mod processes;

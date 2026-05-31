@@ -60,8 +60,9 @@ fn plot_x_for_sample(sample_idx: usize, data_len: usize) -> f64 {
 
 /// Inverse of `plot_x_for_sample`: given a hovered plot X, return the
 /// corresponding sample index, or `None` if the hover is in the empty zone
-/// to the left of the data line.
-fn sample_for_plot_x(plot_x: f64, data_len: usize) -> Option<usize> {
+/// to the left of the data line. Public so the attribution overlay can map a
+/// hovered plot-x onto its own (independently sized) per-sample history.
+pub fn sample_for_plot_x(plot_x: f64, data_len: usize) -> Option<usize> {
     if data_len == 0 {
         return None;
     }
@@ -164,6 +165,8 @@ pub fn sparkline_f64(
 /// hovered sample. The newest sample is anchored to the right edge, so the
 /// crosshair always lands on real data wherever the user hovers within the
 /// data range.
+/// Returns the snapped plot-x the pointer is hovering (or `None`), so callers
+/// can render extra per-sample detail (e.g. process attribution) beneath it.
 pub fn big_plot(
     ui: &mut egui::Ui,
     id: &str,
@@ -171,7 +174,7 @@ pub fn big_plot(
     max_value: f32,
     height: f32,
     sample_interval_ms: u64,
-) {
+) -> Option<f64> {
     // Lock bounds explicitly: the hover overlay reads `plot_bounds().max()[1]`
     // to place labels, and with auto-bounds + 5% margin the labels would
     // expand the bounds each frame and visibly zoom the Y axis out on hover.
@@ -199,8 +202,9 @@ pub fn big_plot(
                         .fill_alpha(0.22),
                 );
             }
-            draw_hover_overlay(plot_ui, series, format_pct_value, sample_interval_ms);
-        });
+            draw_hover_overlay(plot_ui, series, format_pct_value, sample_interval_ms)
+        })
+        .inner
 }
 
 pub fn big_plot_f64(
@@ -210,7 +214,7 @@ pub fn big_plot_f64(
     max_value: f64,
     height: f32,
     sample_interval_ms: u64,
-) {
+) -> Option<f64> {
     Plot::new(id)
         .height(height)
         .show_axes(false)
@@ -235,8 +239,9 @@ pub fn big_plot_f64(
                         .fill_alpha(0.22),
                 );
             }
-            draw_hover_overlay_f64(plot_ui, series, format_bps, sample_interval_ms);
-        });
+            draw_hover_overlay_f64(plot_ui, series, format_bps, sample_interval_ms)
+        })
+        .inner
 }
 
 fn format_pct_value(v: f64) -> String {
@@ -273,23 +278,24 @@ fn format_time_ago(samples_ago: i64, sample_interval_ms: u64) -> String {
     }
 }
 
+/// Returns the snapped plot-x the pointer is hovering (so callers can map it to
+/// their own per-sample data), or `None` when the pointer is off the plot.
 fn draw_hover_overlay<F>(
     plot_ui: &mut egui_plot::PlotUi<'_>,
     series: &[(&str, &VecDeque<f32>, egui::Color32)],
     formatter: F,
     sample_interval_ms: u64,
-) where
+) -> Option<f64>
+where
     F: Fn(f64) -> String,
 {
-    let Some(coord) = plot_ui.pointer_coordinate() else {
-        return;
-    };
+    let coord = plot_ui.pointer_coordinate()?;
     let bounds = plot_ui.plot_bounds();
     let min_x = bounds.min()[0];
     let max_x = bounds.max()[0];
     let max_y = bounds.max()[1];
     if coord.x < min_x || coord.x > max_x {
-        return;
+        return None;
     }
     let max_len = series.iter().map(|(_, d, _)| d.len()).max().unwrap_or(0);
     let snapped_x = coord.x.round().clamp(0.0, (HISTORY_LEN - 1) as f64);
@@ -339,25 +345,26 @@ fn draw_hover_overlay<F>(
             .anchor(anchor),
         );
     }
+    Some(snapped_x)
 }
 
+/// `f64` counterpart of [`draw_hover_overlay`]; returns the snapped plot-x.
 fn draw_hover_overlay_f64<F>(
     plot_ui: &mut egui_plot::PlotUi<'_>,
     series: &[(&str, &VecDeque<f64>, egui::Color32)],
     formatter: F,
     sample_interval_ms: u64,
-) where
+) -> Option<f64>
+where
     F: Fn(f64) -> String,
 {
-    let Some(coord) = plot_ui.pointer_coordinate() else {
-        return;
-    };
+    let coord = plot_ui.pointer_coordinate()?;
     let bounds = plot_ui.plot_bounds();
     let min_x = bounds.min()[0];
     let max_x = bounds.max()[0];
     let max_y = bounds.max()[1];
     if coord.x < min_x || coord.x > max_x {
-        return;
+        return None;
     }
     let max_len = series.iter().map(|(_, d, _)| d.len()).max().unwrap_or(0);
     let snapped_x = coord.x.round().clamp(0.0, (HISTORY_LEN - 1) as f64);
@@ -407,6 +414,7 @@ fn draw_hover_overlay_f64<F>(
             .anchor(anchor),
         );
     }
+    Some(snapped_x)
 }
 
 /// Card frame matching the W11-inspired panel look.

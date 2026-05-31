@@ -121,6 +121,50 @@ pub fn show(ui: &mut egui::Ui, _state: &mut State, settings: &Settings) {
     ui.add_space(12.0);
 
     widgets::card(ui, |ui| {
+        ui.vertical(|ui| {
+            ui.label(
+                egui::RichText::new("Per-process graph attribution")
+                    .strong()
+                    .size(15.0),
+            );
+            ui.label(
+                egui::RichText::new(
+                    "Record the heaviest processes behind each point on the CPU, \
+                     memory and disk graphs. When on, hover any point on those \
+                     graphs to see the top processes for that moment. This makes \
+                     the sampler scan the full process list every tick, so it's \
+                     off by default to keep the core lightweight. History is kept \
+                     only while the window is open and never written to disk.",
+                )
+                .color(theme::TEXT_DIM)
+                .small(),
+            );
+        });
+        ui.add_space(10.0);
+
+        let mut enabled = settings.attribution_enabled();
+        if ui
+            .checkbox(
+                &mut enabled,
+                egui::RichText::new("Show top processes on graph hover").strong(),
+            )
+            .changed()
+        {
+            settings.set_attribution_enabled(enabled);
+        }
+
+        ui.add_space(6.0);
+        let (status, color) = if enabled {
+            ("Attribution on — hover the CPU / Memory / Disk graphs", theme::ACCENT)
+        } else {
+            ("Attribution off", theme::TEXT_DIM)
+        };
+        ui.label(egui::RichText::new(status).color(color).strong());
+    });
+
+    ui.add_space(12.0);
+
+    widgets::card(ui, |ui| {
         ui.label(egui::RichText::new("About").strong().size(15.0));
         ui.add_space(4.0);
         widgets::stat(ui, "Version", env!("CARGO_PKG_VERSION"));

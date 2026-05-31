@@ -1,3 +1,4 @@
+pub mod attribution;
 pub mod gpu;
 pub mod processes;
 pub mod sampler;

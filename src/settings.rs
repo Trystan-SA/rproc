@@ -12,6 +12,11 @@ pub struct Settings {
     /// should run. Persisted so the choice survives restarts — otherwise the
     /// GUI would respawn the daemon on every launch regardless.
     daemon_enabled: Arc<AtomicBool>,
+    /// Whether the sampler captures per-process attribution for the Performance
+    /// graphs (hover a point to see the heaviest processes). Off by default: it
+    /// makes the sampler walk the full process table every tick, so the core
+    /// stays lean until the user opts in. Read live by the sampler thread.
+    attribution_enabled: Arc<AtomicBool>,
 }
 
 impl Default for Settings {
@@ -19,6 +24,7 @@ impl Default for Settings {
         Self {
             refresh_ms: Arc::new(AtomicU64::new(DEFAULT_REFRESH_MS)),
             daemon_enabled: Arc::new(AtomicBool::new(true)),
+            attribution_enabled: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -53,10 +59,14 @@ impl Settings {
             let Some((key, value)) = line.split_once('=') else {
                 continue;
             };
-            if key.trim() == "daemon_enabled" {
-                settings
+            match key.trim() {
+                "daemon_enabled" => settings
                     .daemon_enabled
-                    .store(matches!(value.trim(), "true" | "1"), Ordering::Relaxed);
+                    .store(matches!(value.trim(), "true" | "1"), Ordering::Relaxed),
+                "attribution_enabled" => settings
+                    .attribution_enabled
+                    .store(matches!(value.trim(), "true" | "1"), Ordering::Relaxed),
+                _ => {}
             }
         }
         settings
@@ -88,6 +98,23 @@ impl Settings {
         self.save();
     }
 
+    pub fn attribution_enabled(&self) -> bool {
+        self.attribution_enabled.load(Ordering::Relaxed)
+    }
+
+    /// Flip the graph-attribution toggle and persist it. The sampler thread
+    /// reads the same atomic each tick, so the change takes effect live.
+    pub fn set_attribution_enabled(&self, enabled: bool) {
+        self.attribution_enabled.store(enabled, Ordering::Relaxed);
+        self.save();
+    }
+
+    /// Shared handle for the sampler thread to read the toggle without going
+    /// through the Settings wrapper.
+    pub fn attribution_handle(&self) -> Arc<AtomicBool> {
+        self.attribution_enabled.clone()
+    }
+
     /// Persist the current settings to disk. Best-effort: any failure is
     /// logged to stderr but never propagates.
     fn save(&self) {
@@ -95,8 +122,9 @@ impl Settings {
             return;
         };
         let body = format!(
-            "daemon_enabled={}\n",
-            self.daemon_enabled.load(Ordering::Relaxed)
+            "daemon_enabled={}\nattribution_enabled={}\n",
+            self.daemon_enabled.load(Ordering::Relaxed),
+            self.attribution_enabled.load(Ordering::Relaxed)
         );
         if let Err(e) = std::fs::write(&path, body) {
             eprintln!("rproc: failed to save settings: {e}");
