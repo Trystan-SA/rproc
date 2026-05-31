@@ -25,8 +25,7 @@ pub struct Snapshot {
     pub system: system::SystemSummary,
     pub history: History,
     // Arc so the per-tick publish refcount-bumps instead of deep-cloning the
-    // list, and so the last sample can be retained cheaply while the tab is off
-    // screen (see `sampler_loop`).
+    // list, and so the last sample is retained cheaply while the tab is hidden.
     pub processes: Arc<Vec<processes::ProcInfo>>,
     pub gpus: Vec<gpu::GpuInfo>,
 }
@@ -152,8 +151,7 @@ fn sampler_loop(
         // Skipping it leaves sysinfo's per-PID map empty (we start from
         // `System::new()`), so the cmdline/exe/user strings for hundreds of
         // processes are never allocated until the user actually asks to see them.
-        // When off screen we keep the previous list (don't clear it) so the tab
-        // paints its last sample instantly on reopen.
+        // When hidden we keep the previous list so the tab paints it on reopen.
         let want_procs = processes_active.load(Ordering::Relaxed);
         if want_procs {
             sys.refresh_processes_specifics(
@@ -283,10 +281,8 @@ fn sampler_loop(
         // Publish: one Snapshot clone per tick (≈1 Hz at default settings)
         // instead of one per UI frame.
         *out.lock().unwrap() = Arc::new(working.clone());
-        // Wake the UI now that fresh data is published, rather than letting it
-        // wait for its own repaint timer (which is tied to the sample interval,
-        // so a 10 s rate would otherwise hide a just-collected process list for
-        // up to that long after the tab opens).
+        // Wake the UI now rather than at its next interval-tied repaint, so a
+        // just-collected process list shows immediately after the tab opens.
         ctx.request_repaint();
 
         let elapsed = now.elapsed();
