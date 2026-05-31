@@ -24,7 +24,7 @@ pub struct Snapshot {
     pub sample_interval_ms: u64,
     pub system: system::SystemSummary,
     pub history: History,
-    pub processes: Vec<processes::ProcInfo>,
+    pub processes: Arc<Vec<processes::ProcInfo>>,
     pub gpus: Vec<gpu::GpuInfo>,
 }
 
@@ -63,7 +63,11 @@ pub struct Sampler {
 }
 
 impl Sampler {
-    pub fn start(refresh_ms: Arc<AtomicU64>, attribution_enabled: Arc<AtomicBool>) -> Self {
+    pub fn start(
+        refresh_ms: Arc<AtomicU64>,
+        attribution_enabled: Arc<AtomicBool>,
+        ctx: egui::Context,
+    ) -> Self {
         // Default off: the app opens on Performance, so the process table stays
         // empty until the user first visits the Processes tab.
         let processes_active = Arc::new(AtomicBool::new(false));
@@ -85,7 +89,7 @@ impl Sampler {
         let active_t = processes_active.clone();
         thread::Builder::new()
             .name("rproc-sampler".into())
-            .spawn(move || sampler_loop(inner_t, refresh_ms, active_t, attribution_enabled))
+            .spawn(move || sampler_loop(inner_t, refresh_ms, active_t, attribution_enabled, ctx))
             .expect("spawn sampler");
         Self {
             inner,
@@ -98,8 +102,8 @@ impl Sampler {
     }
 
     /// Tell the sampler whether the process table is currently on screen.
-    /// When false, the next tick skips the per-PID refresh and publishes an
-    /// empty process list, keeping that memory unallocated.
+    /// When false, the next tick skips the per-PID refresh; the last collected
+    /// list is retained so reopening the tab shows it immediately.
     pub fn set_processes_active(&self, on: bool) {
         self.processes_active.store(on, Ordering::Relaxed);
     }
@@ -110,6 +114,7 @@ fn sampler_loop(
     refresh_ms: Arc<AtomicU64>,
     processes_active: Arc<AtomicBool>,
     attribution_enabled: Arc<AtomicBool>,
+    ctx: egui::Context,
 ) {
     // `System::new()` + a CPU refresh avoids `new_all()`'s upfront scan of
     // every PID's cmdline/exe/environ. The loop below repopulates the process
@@ -157,10 +162,11 @@ fn sampler_loop(
         // The per-PID scan is the sampler's most expensive operation, so it
         // runs only when something on screen needs it: the Processes tab
         // (full table) or the optional graph-attribution feature (top-N only).
+        // When hidden we keep the previous list so the tab paints it on reopen.
         let want_procs = processes_active.load(Ordering::Relaxed);
         let want_attr = attribution_enabled.load(Ordering::Relaxed);
         let mut attribution = attribution::Attribution::default();
-        let procs = if want_procs || want_attr {
+        if want_procs || want_attr {
             // Attribution needs only pid/name + CPU/mem/disk; the Processes
             // table additionally wants the string-heavy cmdline/exe/user. Pull
             // the wide set only when the table is actually showing.
@@ -182,13 +188,9 @@ fn sampler_loop(
             }
             if want_procs {
                 users.refresh();
-                processes::collect(&sys, &users)
-            } else {
-                Vec::new()
+                working.processes = Arc::new(processes::collect(&sys, &users));
             }
-        } else {
-            Vec::new()
-        };
+        }
 
         nets.refresh(true);
         disks.refresh(true);
@@ -298,7 +300,6 @@ fn sampler_loop(
         }
 
         working.system = summary;
-        working.processes = procs;
         working.gpus = gpus;
         working.ready = true;
         // Surface the *current* sampling period so plot widgets can label
@@ -311,6 +312,9 @@ fn sampler_loop(
         // Publish: one Snapshot clone per tick (≈1 Hz at default settings)
         // instead of one per UI frame.
         *out.lock().unwrap() = Arc::new(working.clone());
+        // Wake the UI now rather than at its next interval-tied repaint, so a
+        // just-collected process list shows immediately after the tab opens.
+        ctx.request_repaint();
 
         let elapsed = now.elapsed();
         let target = Duration::from_millis(
@@ -415,75 +419,5 @@ fn prefill_history(history: &mut History, samples: &[crate::daemon::storage::Sam
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn push_capped_grows_until_cap() {
-        let mut q: VecDeque<i32> = VecDeque::new();
-        for v in 0..5 {
-            push_capped(&mut q, v, 5);
-        }
-        assert_eq!(q.len(), 5);
-        assert_eq!(q.front(), Some(&0));
-        assert_eq!(q.back(), Some(&4));
-    }
-
-    #[test]
-    fn push_capped_drops_oldest_when_full() {
-        // Once the cap is reached, the front (oldest) drops on every push so
-        // the queue keeps a fixed-size rolling window of the most recent
-        // samples — this is the invariant the plots rely on.
-        let mut q: VecDeque<i32> = VecDeque::new();
-        for v in 0..7 {
-            push_capped(&mut q, v, 5);
-        }
-        assert_eq!(q.len(), 5);
-        assert_eq!(q.front(), Some(&2));
-        assert_eq!(q.back(), Some(&6));
-    }
-
-    #[test]
-    fn push_capped_holds_cap_under_burst() {
-        // After many pushes the queue size should plateau at exactly `cap`,
-        // never grow past it — this is the safety net the plot widgets
-        // depend on for their fixed-width X axis.
-        let mut q: VecDeque<i32> = VecDeque::new();
-        for v in 0..1000 {
-            push_capped(&mut q, v, 60);
-        }
-        assert_eq!(q.len(), 60);
-        // And the contents are the last 60 values.
-        assert_eq!(q.front(), Some(&940));
-        assert_eq!(q.back(), Some(&999));
-    }
-
-    #[test]
-    fn arc_snapshot_publication_smoke() {
-        // We can't easily exercise the sampler thread without running the
-        // full pipeline, but we CAN verify the Arc<Snapshot> publication
-        // surface keeps the cheap-clone invariant: cloning the published
-        // value must return the same pointer rather than reallocating.
-        let inner: Arc<Mutex<Arc<Snapshot>>> = Arc::new(Mutex::new(Arc::new(Snapshot::default())));
-        let a = inner.lock().unwrap().clone();
-        let b = inner.lock().unwrap().clone();
-        assert!(
-            Arc::ptr_eq(&a, &b),
-            "cloned Arcs must share the same allocation"
-        );
-
-        // Swap publishes a new Snapshot — the previous handles keep pointing
-        // at the old data, the new lock yields the new one.
-        {
-            let mut guard = inner.lock().unwrap();
-            *guard = Arc::new(Snapshot {
-                ready: true,
-                ..Snapshot::default()
-            });
-        }
-        let c = inner.lock().unwrap().clone();
-        assert!(c.ready);
-        assert!(!a.ready);
-        assert!(!Arc::ptr_eq(&a, &c));
-    }
-}
+#[path = "sampler_tests.rs"]
+mod tests;

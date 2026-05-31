@@ -40,7 +40,7 @@ fn main() -> anyhow::Result<()> {
         Box::new(move |cc| {
             theme::apply(&cc.egui_ctx);
             egui_extras::install_image_loaders(&cc.egui_ctx);
-            Ok(Box::new(App::new(settings)))
+            Ok(Box::new(App::new(settings, &cc.egui_ctx)))
         }),
     )
     .map_err(|e| anyhow::anyhow!("eframe: {e}"))
