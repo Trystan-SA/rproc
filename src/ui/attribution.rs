@@ -19,6 +19,7 @@ pub enum Kind {
     Cpu,
     Ram,
     Disk,
+    Gpu,
 }
 
 /// Draw the attribution panel beneath a graph. `snapped_x` is the plot-x the
@@ -39,6 +40,7 @@ pub fn show(
             Kind::Cpu => &a.cpu,
             Kind::Ram => &a.ram,
             Kind::Disk => &a.disk,
+            Kind::Gpu => &a.gpu,
         });
 
     ui.add_space(6.0);
@@ -104,7 +106,7 @@ pub fn show(
 
 fn format_value(kind: Kind, s: &ProcShare) -> String {
     match kind {
-        Kind::Cpu => fmt_pct(s.value),
+        Kind::Cpu | Kind::Gpu => fmt_pct(s.value),
         // RAM shows the absolute footprint plus its share of total memory.
         Kind::Ram => format!("{} ({})", widgets::format_bytes(s.bytes), fmt_pct(s.value)),
         Kind::Disk => widgets::format_bps(s.value as f64),

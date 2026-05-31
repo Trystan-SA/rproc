@@ -9,7 +9,7 @@ use sysinfo::{
     Users,
 };
 
-use super::{attribution, gpu, processes, system};
+use super::{attribution, gpu, gpu_attribution, processes, system};
 use crate::settings::{MAX_REFRESH_MS, MIN_REFRESH_MS};
 
 const HISTORY_LEN: usize = 60;
@@ -123,6 +123,7 @@ fn sampler_loop(
     let mut components = Components::new_with_refreshed_list();
     let mut users = Users::new_with_refreshed_list();
     let mut gpu_collector = gpu::GpuCollector::init();
+    let mut gpu_attr = gpu_attribution::GpuAttribution::init();
 
     // Start from whatever's been published (the prefill from disk) so we
     // don't drop the history we just loaded. After this point the working
@@ -177,6 +178,7 @@ fn sampler_loop(
             sys.refresh_processes_specifics(ProcessesToUpdate::All, true, kind);
             if want_attr {
                 attribution = attribution::collect(&sys, delta_secs);
+                attribution.gpu = gpu_attr.sample(&sys, gpu_collector.nvml(), delta_secs);
             }
             if want_procs {
                 users.refresh();

@@ -714,7 +714,7 @@ fn panel_gpu(ui: &mut egui::Ui, snap: &Snapshot, idx: usize) {
         let empty: VecDeque<f32> = VecDeque::new();
         let util_hist = snap.history.gpu_util.get(idx).unwrap_or(&empty);
         let mem_hist = snap.history.gpu_mem_pct.get(idx).unwrap_or(&empty);
-        widgets::big_plot(
+        let hovered = widgets::big_plot(
             ui,
             "gpu_plot",
             &[
@@ -725,6 +725,9 @@ fn panel_gpu(ui: &mut egui::Ui, snap: &Snapshot, idx: usize) {
             180.0,
             snap.sample_interval_ms,
         );
+        // GPU attribution is system-wide (merged across devices), shown under
+        // whichever GPU panel is open.
+        attribution_panel(ui, snap, attribution::Kind::Gpu, hovered);
         ui.add_space(8.0);
         let util_label = if g.util_pct.is_nan() {
             "N/A".to_string()

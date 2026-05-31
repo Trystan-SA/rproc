@@ -46,6 +46,12 @@ impl GpuCollector {
         }
     }
 
+    /// Borrow the NVML handle (if any) so the per-process GPU attribution can
+    /// query `process_utilization_stats` without owning a second NVML init.
+    pub fn nvml(&self) -> Option<&Nvml> {
+        self.nvml.as_ref()
+    }
+
     pub fn sample(&mut self) -> Vec<GpuInfo> {
         let mut out = Vec::new();
         if let Some(nvml) = &self.nvml

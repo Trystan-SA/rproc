@@ -39,6 +39,10 @@ pub struct Attribution {
     pub cpu: Vec<ProcShare>,
     pub ram: Vec<ProcShare>,
     pub disk: Vec<ProcShare>,
+    /// Per-process GPU utilization (%). Filled separately by
+    /// [`super::gpu_attribution`] since it needs vendor-specific, stateful
+    /// sources; empty when no GPU source is available.
+    pub gpu: Vec<ProcShare>,
 }
 
 /// Compute the per-resource top-N directly from an already-refreshed `System`,
@@ -109,6 +113,9 @@ pub fn collect(sys: &System, delta_secs: f64) -> Attribution {
         cpu: top_n(cpu),
         ram: top_n(ram),
         disk: top_n(disk),
+        // Filled by the caller via gpu_attribution::sample — needs stateful,
+        // vendor-specific sources this sysinfo-only pass doesn't have.
+        gpu: Vec::new(),
     }
 }
 
