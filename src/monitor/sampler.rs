@@ -24,8 +24,6 @@ pub struct Snapshot {
     pub sample_interval_ms: u64,
     pub system: system::SystemSummary,
     pub history: History,
-    // Arc so the per-tick publish refcount-bumps instead of deep-cloning the
-    // list, and so the last sample is retained cheaply while the tab is hidden.
     pub processes: Arc<Vec<processes::ProcInfo>>,
     pub gpus: Vec<gpu::GpuInfo>,
 }
