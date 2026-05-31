@@ -1,23 +1,24 @@
 //! Intel i915 / xe GPU sampling.
 //!
-//! sysfs exposes Intel GPU frequency but not utilization. The i915 (and newer
-//! `xe`) drivers publish a perf PMU at /sys/bus/event_source/devices/{i915,xe}
-//! with engine-busy and rc6-residency counters. We read `rc6-residency-gt0`
-//! (nanoseconds the GT spent in RC6 sleep) and derive busy% as
-//! `1 - delta_rc6 / delta_time_enabled`. Single fd, single read per frame.
+//! sysfs exposes Intel GPU frequency and temperature but not utilization. The
+//! i915/xe PMU can report engine-busy, but `perf_event_open` needs CAP_PERFMON
+//! or `kernel.perf_event_paranoid <= 2`, so it silently fails on most desktops.
 //!
-//! Requires either CAP_PERFMON or kernel.perf_event_paranoid <= 2; we degrade
-//! silently to NaN ("unavailable") if the syscall is refused.
+//! Instead we derive utilization the way `intel_gpu_top`/nvtop do for global
+//! busyness: each DRM client exposes cumulative per-engine busy nanoseconds in
+//! `/proc/<pid>/fdinfo/<fd>` (`drm-engine-render`, `drm-engine-compute`, ...).
+//! Busy% over an interval is `Σ Δengine_ns / Δwall_ns`, summed across clients of
+//! this card. No special privilege is needed to read fdinfo for processes we can
+//! already see, which is why it works where the perf path is refused.
 
+use std::collections::HashMap;
 use std::fs;
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::Path;
-
-use libc::c_int;
+use std::time::Instant;
 
 use super::{GpuInfo, pci_model, read_file_f32, read_file_u64};
 
-pub(super) fn read(device: &Path, pmu: Option<&mut IntelPmu>) -> GpuInfo {
+pub(super) fn read(device: &Path, fdinfo: Option<&mut IntelFdinfo>) -> GpuInfo {
     let cur_freq = read_file_u64(&device.join("gt_act_freq_mhz"))
         .or_else(|| read_file_u64(&device.join("gt/gt0/rps_act_freq_mhz")))
         .unwrap_or(0) as u32;
@@ -30,10 +31,11 @@ pub(super) fn read(device: &Path, pmu: Option<&mut IntelPmu>) -> GpuInfo {
             }
         }
     }
-    // NaN sentinel = "utilization unavailable" (no PMU access). The UI
-    // renders this as "N/A" instead of a misleading 0 %.
-    let util_pct = match pmu {
-        Some(p) => p.sample().unwrap_or(f32::NAN),
+    // NaN sentinel = "utilization unavailable" (couldn't resolve the card's PCI
+    // slot to match fdinfo against). The UI renders this as "N/A" rather than a
+    // misleading 0 %.
+    let util_pct = match fdinfo {
+        Some(f) => f.sample(),
         None => f32::NAN,
     };
     GpuInfo {
@@ -50,151 +52,132 @@ pub(super) fn read(device: &Path, pmu: Option<&mut IntelPmu>) -> GpuInfo {
     }
 }
 
-#[repr(C)]
-struct PerfEventAttr {
-    type_: u32,
-    size: u32,
-    config: u64,
-    sample_period: u64,
-    sample_type: u64,
-    read_format: u64,
-    flags: u64,
-    wakeup_events: u32,
-    bp_type: u32,
-    bp_addr: u64,
+/// Per-card fdinfo utilization sampler. Matches DRM clients by the card's PCI
+/// slot (`drm-pdev`) so multiple Intel GPUs are disambiguated.
+pub(super) struct IntelFdinfo {
+    pdev: String,
+    prev: HashMap<u64, u64>,
+    last: Option<Instant>,
 }
 
-const PERF_FORMAT_TOTAL_TIME_ENABLED: u64 = 1;
-const PERF_FLAG_FD_CLOEXEC: libc::c_ulong = 8;
-
-pub(super) struct IntelPmu {
-    fd: OwnedFd,
-    last_rc6_ns: u64,
-    last_time_ns: u64,
-    primed: bool,
-}
-
-impl IntelPmu {
-    pub(super) fn open() -> Option<Self> {
-        let (pmu_type, config, cpu) = pmu_lookup("i915").or_else(|| pmu_lookup("xe"))?;
-        let attr = PerfEventAttr {
-            type_: pmu_type,
-            size: std::mem::size_of::<PerfEventAttr>() as u32,
-            config,
-            sample_period: 0,
-            sample_type: 0,
-            read_format: PERF_FORMAT_TOTAL_TIME_ENABLED,
-            flags: 0,
-            wakeup_events: 0,
-            bp_type: 0,
-            bp_addr: 0,
-        };
-        // pid=-1 + cpu=<pmu cpumask first> → system-wide counter on the PMU's
-        // home CPU, which is what the kernel demands for device PMUs.
-        // SAFETY: `attr` is a fully-initialized, correctly-sized PerfEventAttr
-        // and lives for the duration of the call; perf_event_open reads it and
-        // returns a new fd (or a negative errno), touching nothing else.
-        let raw = unsafe {
-            libc::syscall(
-                libc::SYS_perf_event_open,
-                &attr as *const PerfEventAttr,
-                -1i32,
-                cpu as c_int,
-                -1i32,
-                PERF_FLAG_FD_CLOEXEC,
-            )
-        };
-        if raw < 0 {
-            // Most common cause is kernel.perf_event_paranoid > 2 without
-            // CAP_PERFMON. Print once at startup so users running unprivileged
-            // know what knob to turn.
-            let errno = std::io::Error::last_os_error();
-            eprintln!(
-                "rproc: Intel GPU utilization disabled (perf_event_open: {errno}). \
-                 Fix: `sudo setcap cap_perfmon=ep <binary>` or `sudo sysctl kernel.perf_event_paranoid=2`."
-            );
-            return None;
-        }
-        // SAFETY: `raw` is a fresh, valid fd the kernel just handed us (checked
-        // >= 0 above) and is owned by nothing else, so OwnedFd can take it.
-        let fd = unsafe { OwnedFd::from_raw_fd(raw as c_int) };
+impl IntelFdinfo {
+    pub(super) fn new(device: &Path) -> Option<Self> {
+        let pdev = pdev_of(device)?;
         Some(Self {
-            fd,
-            last_rc6_ns: 0,
-            last_time_ns: 0,
-            primed: false,
+            pdev,
+            prev: HashMap::new(),
+            last: None,
         })
     }
 
-    fn sample(&mut self) -> Option<f32> {
-        let mut buf = [0u64; 2]; // value, time_enabled
-        // SAFETY: reading into `buf` (16 bytes) from our own perf fd; the size
-        // passed matches the buffer, and the kernel writes at most that many.
-        let n = unsafe {
-            libc::read(
-                self.fd.as_raw_fd(),
-                buf.as_mut_ptr() as *mut libc::c_void,
-                std::mem::size_of_val(&buf),
-            )
+    fn sample(&mut self) -> f32 {
+        let now = Instant::now();
+        let cur = self.collect_busy_ns();
+
+        let util = match self.last {
+            None => 0.0,
+            Some(last) => {
+                let dt = now.duration_since(last).as_nanos();
+                if dt == 0 {
+                    0.0
+                } else {
+                    // Engine counters are cumulative and monotonic per client;
+                    // a counter reset (cur < prev) contributes nothing.
+                    let busy: u64 = cur
+                        .iter()
+                        .filter_map(|(cid, &ns)| Some(ns.saturating_sub(*self.prev.get(cid)?)))
+                        .sum();
+                    ((busy as f64 / dt as f64) * 100.0).min(100.0) as f32
+                }
+            }
         };
-        if n != std::mem::size_of_val(&buf) as isize {
-            return None;
+
+        self.prev = cur;
+        self.last = Some(now);
+        util
+    }
+
+    /// One busy-ns total per DRM client of this card. Keyed by client id so the
+    /// same client seen through several fds/pids is counted once.
+    fn collect_busy_ns(&self) -> HashMap<u64, u64> {
+        let mut out = HashMap::new();
+        let Ok(procs) = fs::read_dir("/proc") else {
+            return out;
+        };
+        for proc in procs.flatten() {
+            let name = proc.file_name();
+            let Some(pid) = name.to_str().and_then(|s| s.parse::<u32>().ok()) else {
+                continue;
+            };
+            let Ok(fds) = fs::read_dir(format!("/proc/{pid}/fd")) else {
+                continue;
+            };
+            for fd in fds.flatten() {
+                // Cheap pre-filter: only read fdinfo for fds pointing at the DRM
+                // subsystem, skipping the thousands of socket/file fds.
+                match fs::read_link(fd.path()) {
+                    Ok(target) if target.starts_with("/dev/dri/") => {}
+                    _ => continue,
+                }
+                let fd_name = fd.file_name();
+                let info = format!("/proc/{pid}/fdinfo/{}", fd_name.to_string_lossy());
+                let Ok(content) = fs::read_to_string(&info) else {
+                    continue;
+                };
+                if let Some((cid, ns)) = parse_fdinfo(&content, &self.pdev) {
+                    out.insert(cid, ns);
+                }
+            }
         }
-        let rc6_ns = buf[0];
-        let time_ns = buf[1];
-        if !self.primed {
-            self.last_rc6_ns = rc6_ns;
-            self.last_time_ns = time_ns;
-            self.primed = true;
-            return Some(0.0);
-        }
-        let d_rc6 = rc6_ns.saturating_sub(self.last_rc6_ns);
-        let d_time = time_ns.saturating_sub(self.last_time_ns);
-        self.last_rc6_ns = rc6_ns;
-        self.last_time_ns = time_ns;
-        if d_time == 0 {
-            return Some(0.0);
-        }
-        let idle = (d_rc6 as f64 / d_time as f64).min(1.0);
-        Some(((1.0 - idle) * 100.0) as f32)
+        out
     }
 }
 
-/// Returns (pmu_type, event_config, home_cpu) for the requested driver +
-/// rc6-residency event, or None if the PMU / event isn't present.
-fn pmu_lookup(driver: &str) -> Option<(u32, u64, u32)> {
-    let base = format!("/sys/bus/event_source/devices/{driver}");
-    let pmu_type: u32 = fs::read_to_string(format!("{base}/type"))
+/// Parses a DRM fdinfo file, returning `(client_id, busy_ns)` for the render +
+/// compute engines if the entry belongs to `pdev`, else `None`.
+fn parse_fdinfo(content: &str, pdev: &str) -> Option<(u64, u64)> {
+    let mut client_id = None;
+    let mut matched_pdev = false;
+    let mut busy_ns = 0u64;
+    for line in content.lines() {
+        let Some((key, val)) = line.split_once(':') else {
+            continue;
+        };
+        let val = val.trim();
+        match key.trim() {
+            "drm-pdev" => {
+                if val != pdev {
+                    return None;
+                }
+                matched_pdev = true;
+            }
+            "drm-client-id" => client_id = val.parse().ok(),
+            "drm-engine-render" | "drm-engine-compute" => {
+                if let Some(ns) = val
+                    .strip_suffix(" ns")
+                    .and_then(|n| n.trim().parse::<u64>().ok())
+                {
+                    busy_ns = busy_ns.saturating_add(ns);
+                }
+            }
+            _ => {}
+        }
+    }
+    if matched_pdev {
+        client_id.map(|c| (c, busy_ns))
+    } else {
+        None
+    }
+}
+
+/// Resolves a `/sys/class/drm/cardN/device` path to its PCI slot string (e.g.
+/// `0000:00:02.0`), which is what fdinfo reports as `drm-pdev`.
+fn pdev_of(device: &Path) -> Option<String> {
+    fs::canonicalize(device)
         .ok()?
-        .trim()
-        .parse()
-        .ok()?;
-    let raw = fs::read_to_string(format!("{base}/events/rc6-residency-gt0")).ok()?;
-    let config = parse_pmu_event_config(&raw)?;
-    let cpu = fs::read_to_string(format!("{base}/cpumask"))
-        .ok()
-        .and_then(|s| parse_first_cpu(&s))
-        .unwrap_or(0);
-    Some((pmu_type, config, cpu))
-}
-
-/// Parses a sysfs PMU event spec like "config=0x100003" or
-/// "event=0x12,umask=0x01" → returns the `config` value as u64.
-fn parse_pmu_event_config(s: &str) -> Option<u64> {
-    for pair in s.trim().split(',') {
-        let (k, v) = pair.split_once('=')?;
-        if k.trim() == "config" {
-            let v = v.trim();
-            let v = v.strip_prefix("0x").unwrap_or(v);
-            return u64::from_str_radix(v, 16).ok();
-        }
-    }
-    None
-}
-
-/// Parses a Linux cpumask like "0", "0-3", or "0,4" and returns the first CPU.
-fn parse_first_cpu(s: &str) -> Option<u32> {
-    s.trim().split(&['-', ','][..]).next()?.trim().parse().ok()
+        .file_name()?
+        .to_str()
+        .map(str::to_owned)
 }
 
 #[cfg(test)]

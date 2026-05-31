@@ -7,7 +7,7 @@ mod amd;
 mod intel;
 mod nvidia;
 
-use intel::IntelPmu;
+use intel::IntelFdinfo;
 
 #[derive(Clone, Default, Debug)]
 pub struct GpuInfo {
@@ -27,25 +27,22 @@ pub struct GpuCollector {
     nvml: Option<Nvml>,
     amd_cards: Vec<PathBuf>,
     intel_cards: Vec<PathBuf>,
-    intel_pmus: Vec<Option<IntelPmu>>,
+    intel_fdinfo: Vec<Option<IntelFdinfo>>,
 }
 
 impl GpuCollector {
     pub fn init() -> Self {
         let nvml = Nvml::init().ok();
         let (amd, intel) = scan_drm();
-        // The i915/xe PMU is system-wide (a single counter set for all engines).
-        // Open it once and attach it to the first Intel card; additional cards
-        // fall back to 0 % until per-card disambiguation is wired up.
-        let mut intel_pmus: Vec<Option<IntelPmu>> = intel.iter().map(|_| None).collect();
-        if !intel_pmus.is_empty() {
-            intel_pmus[0] = IntelPmu::open();
-        }
+        // Utilization comes from per-client fdinfo busy counters; each sampler
+        // matches its own card by PCI slot, so multiple Intel GPUs disambiguate.
+        let intel_fdinfo: Vec<Option<IntelFdinfo>> =
+            intel.iter().map(|d| IntelFdinfo::new(d)).collect();
         Self {
             nvml,
             amd_cards: amd,
             intel_cards: intel,
-            intel_pmus,
+            intel_fdinfo,
         }
     }
 
@@ -70,8 +67,8 @@ impl GpuCollector {
         for p in &self.amd_cards {
             out.push(amd::read(p));
         }
-        for (p, pmu) in self.intel_cards.iter().zip(self.intel_pmus.iter_mut()) {
-            out.push(intel::read(p, pmu.as_mut()));
+        for (p, fdinfo) in self.intel_cards.iter().zip(self.intel_fdinfo.iter_mut()) {
+            out.push(intel::read(p, fdinfo.as_mut()));
         }
         out
     }

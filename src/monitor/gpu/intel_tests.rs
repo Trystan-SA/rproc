@@ -1,36 +1,61 @@
 use super::*;
 
+const PDEV: &str = "0000:00:02.0";
+
 #[test]
-fn parses_pmu_event_config_simple() {
-    assert_eq!(parse_pmu_event_config("config=0x100003"), Some(0x100003));
-    assert_eq!(parse_pmu_event_config("config=0x0"), Some(0));
+fn sums_render_and_compute_for_matching_pdev() {
+    let fdinfo = "\
+drm-client-id:\t475
+drm-pdev:\t0000:00:02.0
+drm-engine-render:\t1000 ns
+drm-engine-copy:\t50 ns
+drm-engine-compute:\t250 ns
+";
+    assert_eq!(parse_fdinfo(fdinfo, PDEV), Some((475, 1250)));
 }
 
 #[test]
-fn parses_pmu_event_config_with_extra_fields() {
-    assert_eq!(
-        parse_pmu_event_config("event=0x12,config=0xabcd,umask=0x1"),
-        Some(0xabcd)
-    );
+fn ignores_other_cards() {
+    let fdinfo = "\
+drm-client-id:\t1
+drm-pdev:\t0000:03:00.0
+drm-engine-render:\t999 ns
+";
+    assert_eq!(parse_fdinfo(fdinfo, PDEV), None);
 }
 
 #[test]
-fn parses_pmu_event_config_missing() {
-    assert_eq!(parse_pmu_event_config("event=0x12"), None);
+fn missing_client_id_yields_none() {
+    let fdinfo = "\
+drm-pdev:\t0000:00:02.0
+drm-engine-render:\t1000 ns
+";
+    assert_eq!(parse_fdinfo(fdinfo, PDEV), None);
 }
 
 #[test]
-fn parses_first_cpu_single() {
-    assert_eq!(parse_first_cpu("0"), Some(0));
-    assert_eq!(parse_first_cpu("7"), Some(7));
+fn no_pdev_line_yields_none() {
+    let fdinfo = "drm-client-id:\t1\ndrm-engine-render:\t1000 ns\n";
+    assert_eq!(parse_fdinfo(fdinfo, PDEV), None);
 }
 
 #[test]
-fn parses_first_cpu_range() {
-    assert_eq!(parse_first_cpu("2-5"), Some(2));
+fn pdev_after_engine_lines_still_matches() {
+    let fdinfo = "\
+drm-client-id:\t7
+drm-engine-render:\t300 ns
+drm-pdev:\t0000:00:02.0
+";
+    assert_eq!(parse_fdinfo(fdinfo, PDEV), Some((7, 300)));
 }
 
 #[test]
-fn parses_first_cpu_list() {
-    assert_eq!(parse_first_cpu("4,8,12"), Some(4));
+fn malformed_engine_value_is_skipped() {
+    let fdinfo = "\
+drm-client-id:\t2
+drm-pdev:\t0000:00:02.0
+drm-engine-render:\tnonsense
+drm-engine-compute:\t40 ns
+";
+    assert_eq!(parse_fdinfo(fdinfo, PDEV), Some((2, 40)));
 }
