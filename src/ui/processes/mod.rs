@@ -1,106 +1,21 @@
-use std::collections::{BTreeMap, HashSet};
-use std::path::PathBuf;
+use std::collections::HashSet;
 
 use egui_extras::{Column, TableBuilder, TableRow};
 
-use crate::daemon::storage;
 use crate::monitor::{self, Snapshot};
 use crate::theme;
 use crate::ui::icons;
 use crate::ui::widgets;
 
-#[derive(Default, PartialEq, Copy, Clone, Debug)]
-enum SortKey {
-    Name,
-    Pid,
-    User,
-    #[default]
-    Cpu,
-    Mem,
-    Disk,
-    Status,
-}
+mod actions;
+mod grouping;
+mod properties;
+mod sort;
 
-impl SortKey {
-    fn as_str(self) -> &'static str {
-        match self {
-            SortKey::Name => "Name",
-            SortKey::Pid => "Pid",
-            SortKey::User => "User",
-            SortKey::Cpu => "Cpu",
-            SortKey::Mem => "Mem",
-            SortKey::Disk => "Disk",
-            SortKey::Status => "Status",
-        }
-    }
-
-    fn from_str(s: &str) -> Option<Self> {
-        Some(match s {
-            "Name" => SortKey::Name,
-            "Pid" => SortKey::Pid,
-            "User" => SortKey::User,
-            "Cpu" => SortKey::Cpu,
-            "Mem" => SortKey::Mem,
-            "Disk" => SortKey::Disk,
-            "Status" => SortKey::Status,
-            _ => return None,
-        })
-    }
-}
-
-fn sort_prefs_path() -> Option<PathBuf> {
-    storage::cache_dir()
-        .ok()
-        .map(|d| d.join("processes_sort.txt"))
-}
-
-fn load_sort_prefs() -> Option<(SortKey, bool)> {
-    let path = sort_prefs_path()?;
-    load_sort_prefs_from(&path)
-}
-
-fn save_sort_prefs(sort: SortKey, descending: bool) {
-    if let Some(path) = sort_prefs_path() {
-        let _ = save_sort_prefs_to(&path, sort, descending);
-    }
-}
-
-fn load_sort_prefs_from(path: &std::path::Path) -> Option<(SortKey, bool)> {
-    let content = std::fs::read_to_string(path).ok()?;
-    let mut sort = None;
-    let mut desc = None;
-    for line in content.lines() {
-        if let Some(v) = line.strip_prefix("sort=") {
-            sort = SortKey::from_str(v.trim());
-        } else if let Some(v) = line.strip_prefix("descending=") {
-            desc = match v.trim() {
-                "true" => Some(true),
-                "false" => Some(false),
-                _ => None,
-            };
-        }
-    }
-    Some((sort?, desc?))
-}
-
-fn save_sort_prefs_to(
-    path: &std::path::Path,
-    sort: SortKey,
-    descending: bool,
-) -> std::io::Result<()> {
-    let content = format!("sort={}\ndescending={}\n", sort.as_str(), descending);
-    std::fs::write(path, content)
-}
-
-/// Heavy lookups behind the Properties modal — each one walks `/proc` and
-/// performs a fistful of syscalls. Computed when the modal opens, then
-/// re-used until the user clicks Reload or opens a different PID.
-pub struct ProcessPropertiesView {
-    pub pid: u32,
-    pub cwd: Option<String>,
-    pub fd_count: Option<usize>,
-    pub configs: Vec<PathBuf>,
-}
+use actions::{open_in_file_manager, open_search};
+use grouping::{Group, Row, append_section, build_groups, sort_children, sort_groups};
+use properties::{ProcessPropertiesView, build_properties_view, render_properties_window};
+use sort::{SortKey, load_sort_prefs, save_sort_prefs};
 
 pub struct State {
     sort: SortKey,
@@ -143,86 +58,6 @@ impl State {
 impl Default for State {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-struct Group<'a> {
-    name: &'a str,
-    procs: Vec<&'a monitor::processes::ProcInfo>,
-    cpu_pct: f32,
-    mem_bytes: u64,
-    disk_bps: f64,
-}
-
-/// Group processes by name and roll up CPU / memory / disk totals. Keying on
-/// `&str` (borrowed from `procs`) skips ~N `String` allocations per frame,
-/// where N is the number of processes. The `matches` predicate filters before
-/// grouping so empty groups don't appear in the result.
-fn build_groups<'a>(
-    procs: &'a [monitor::processes::ProcInfo],
-    matches: &dyn Fn(&monitor::processes::ProcInfo) -> bool,
-) -> Vec<Group<'a>> {
-    let mut by_name: BTreeMap<&str, Vec<&monitor::processes::ProcInfo>> = BTreeMap::new();
-    for p in procs {
-        if matches(p) {
-            by_name.entry(p.name.as_str()).or_default().push(p);
-        }
-    }
-    by_name
-        .into_iter()
-        .map(|(name, procs)| {
-            let cpu_pct = procs.iter().map(|p| p.cpu_pct).sum();
-            let mem_bytes = procs.iter().map(|p| p.mem_bytes).sum();
-            let disk_bps = procs
-                .iter()
-                .map(|p| p.disk_read_bps + p.disk_write_bps)
-                .sum();
-            Group {
-                name,
-                procs,
-                cpu_pct,
-                mem_bytes,
-                disk_bps,
-            }
-        })
-        .collect()
-}
-
-#[derive(Clone, Copy)]
-enum Row<'a> {
-    SectionHeader(&'static str),
-    GroupHeader { g: &'a Group<'a>, expanded: bool },
-    Single(&'a monitor::processes::ProcInfo),
-    Child(&'a monitor::processes::ProcInfo),
-}
-
-/// Split the built groups into the "Apps" section (processes with a freedesktop
-/// `.desktop` entry — launchable applications) and the background section
-/// (daemons, kernel threads, helpers). Each section is sorted independently by
-/// the caller so background processes can never rank above apps.
-fn append_section<'a>(
-    visible: &mut Vec<Row<'a>>,
-    title: &'static str,
-    groups: &'a [Group<'a>],
-    filter_active: bool,
-    expanded_set: &HashSet<String>,
-) {
-    if groups.is_empty() {
-        return;
-    }
-    visible.push(Row::SectionHeader(title));
-    for g in groups {
-        if g.procs.len() == 1 {
-            visible.push(Row::Single(g.procs[0]));
-        } else {
-            let expanded = filter_active || expanded_set.contains(g.name);
-            visible.push(Row::GroupHeader { g, expanded });
-            if expanded {
-                for p in &g.procs {
-                    visible.push(Row::Child(p));
-                }
-            }
-        }
     }
 }
 
@@ -666,62 +501,6 @@ fn draw_caret(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32, d
     painter.add(egui::Shape::convex_polygon(pts, color, egui::Stroke::NONE));
 }
 
-fn sort_groups(groups: &mut [Group], key: SortKey, desc: bool) {
-    groups.sort_by(|a, b| {
-        let ord = match key {
-            SortKey::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-            SortKey::Pid => a
-                .procs
-                .iter()
-                .map(|p| p.pid)
-                .min()
-                .cmp(&b.procs.iter().map(|p| p.pid).min()),
-            SortKey::User => a
-                .procs
-                .first()
-                .map(|p| p.user.as_str())
-                .cmp(&b.procs.first().map(|p| p.user.as_str())),
-            SortKey::Cpu => a
-                .cpu_pct
-                .partial_cmp(&b.cpu_pct)
-                .unwrap_or(std::cmp::Ordering::Equal),
-            SortKey::Mem => a.mem_bytes.cmp(&b.mem_bytes),
-            SortKey::Disk => a
-                .disk_bps
-                .partial_cmp(&b.disk_bps)
-                .unwrap_or(std::cmp::Ordering::Equal),
-            SortKey::Status => a
-                .procs
-                .first()
-                .map(|p| p.status.as_str())
-                .cmp(&b.procs.first().map(|p| p.status.as_str())),
-        };
-        if desc { ord.reverse() } else { ord }
-    });
-}
-
-fn sort_children(rows: &mut [&monitor::processes::ProcInfo], key: SortKey, desc: bool) {
-    rows.sort_by(|a, b| {
-        let ord = match key {
-            SortKey::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-            SortKey::Pid => a.pid.cmp(&b.pid),
-            SortKey::User => a.user.cmp(&b.user),
-            SortKey::Cpu => a
-                .cpu_pct
-                .partial_cmp(&b.cpu_pct)
-                .unwrap_or(std::cmp::Ordering::Equal),
-            SortKey::Mem => a.mem_bytes.cmp(&b.mem_bytes),
-            SortKey::Disk => {
-                let ax = a.disk_read_bps + a.disk_write_bps;
-                let bx = b.disk_read_bps + b.disk_write_bps;
-                ax.partial_cmp(&bx).unwrap_or(std::cmp::Ordering::Equal)
-            }
-            SortKey::Status => a.status.cmp(&b.status),
-        };
-        if desc { ord.reverse() } else { ord }
-    });
-}
-
 fn format_pct(v: f32) -> String {
     if v < 0.05 {
         "0%".into()
@@ -869,141 +648,6 @@ fn group_context_menu(ui: &mut egui::Ui, g: &Group<'_>, open_properties_pid: &mu
             *open_properties_pid = Some(p.pid);
             ui.close();
         }
-    }
-}
-
-fn open_in_file_manager(exe: &str) {
-    let path = std::path::Path::new(exe);
-    let target = if path.is_file() {
-        path.parent().unwrap_or(path)
-    } else {
-        path
-    };
-    let _ = std::process::Command::new("xdg-open").arg(target).spawn();
-}
-
-fn open_search(name: &str) {
-    let q = format!("linux process {name}");
-    let url = format!("https://www.google.com/search?q={}", url_encode(&q));
-    let _ = std::process::Command::new("xdg-open").arg(url).spawn();
-}
-
-fn url_encode(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char);
-            }
-            b' ' => out.push('+'),
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
-}
-
-/// Resolve cwd, fd count, and well-known config paths once. The result is
-/// stable enough (working dir + fd count drift slowly, configs almost never)
-/// that we don't refresh on every frame — the modal exposes a Reload button.
-fn build_properties_view(p: &monitor::processes::ProcInfo) -> ProcessPropertiesView {
-    ProcessPropertiesView {
-        pid: p.pid,
-        cwd: monitor::processes::read_cwd(p.pid),
-        fd_count: monitor::processes::read_fd_count(p.pid),
-        configs: monitor::processes::find_config_paths(&p.name, &p.exe),
-    }
-}
-
-fn render_properties_window(
-    ctx: &egui::Context,
-    properties: &mut Option<ProcessPropertiesView>,
-    snap: &Snapshot,
-) {
-    let Some(view) = properties.as_ref() else {
-        return;
-    };
-    let pid = view.pid;
-    let Some(p) = snap.processes.iter().find(|p| p.pid == pid) else {
-        // Process exited — auto-close.
-        *properties = None;
-        return;
-    };
-
-    let uptime = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH + std::time::Duration::from_secs(p.start_time))
-        .ok()
-        .map(|d| widgets::format_duration(d.as_secs()));
-
-    let mut open = true;
-    let mut reload = false;
-    egui::Window::new(format!("Properties: {}", p.name))
-        .id(egui::Id::new(("proc_properties", pid)))
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(true)
-        .default_width(520.0)
-        .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .button("\u{21BB}")
-                        .on_hover_text("Reload properties")
-                        .clicked()
-                    {
-                        reload = true;
-                    }
-                });
-            });
-            widgets::stat(ui, "PID", &p.pid.to_string());
-            widgets::stat(
-                ui,
-                "Parent PID",
-                &p.parent
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|| "—".into()),
-            );
-            widgets::stat(ui, "User", if p.user.is_empty() { "—" } else { &p.user });
-            widgets::stat(ui, "Status", &p.status);
-            ui.separator();
-            widgets::stat(ui, "CPU", &format!("{:.1}%", p.cpu_pct));
-            widgets::stat(ui, "Memory (RSS)", &widgets::format_bytes(p.mem_bytes));
-            widgets::stat(ui, "Virtual memory", &widgets::format_bytes(p.virt_bytes));
-            widgets::stat(ui, "Threads", &p.threads.to_string());
-            if let Some(fds) = view.fd_count {
-                widgets::stat(ui, "Open file descriptors", &fds.to_string());
-            }
-            if let Some(up) = uptime {
-                widgets::stat(ui, "Running for", &up);
-            }
-            ui.separator();
-            if !p.exe.is_empty() {
-                widgets::path_field(ui, "Executable", &p.exe, widgets::OpenTarget::Parent);
-                ui.add_space(4.0);
-            }
-            if let Some(cwd) = &view.cwd {
-                widgets::path_field(ui, "Working directory", cwd, widgets::OpenTarget::Self_);
-                ui.add_space(4.0);
-            }
-            if !view.configs.is_empty() {
-                ui.label(egui::RichText::new("Config").color(theme::TEXT_DIM));
-                for path in &view.configs {
-                    widgets::path_field_compact(ui, &path.to_string_lossy());
-                }
-                ui.add_space(4.0);
-            }
-            if !p.cmd.is_empty() {
-                ui.label(egui::RichText::new("Command line").color(theme::TEXT_DIM));
-                ui.add(egui::Label::new(&p.cmd).wrap());
-            }
-        });
-    if reload
-        && let Some(v) = properties.as_mut()
-        && let Some(p) = snap.processes.iter().find(|p| p.pid == pid)
-    {
-        *v = build_properties_view(p);
-    }
-    if !open {
-        *properties = None;
     }
 }
 
