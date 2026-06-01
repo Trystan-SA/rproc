@@ -21,7 +21,7 @@ fn format_pct_high_values_round_to_int() {
 fn status_color_known_states_distinct_from_default() {
     // Regression: every known status string should map to a non-default
     // colour (otherwise the column loses its visual cue).
-    let default = theme::TEXT;
+    let default = theme::text();
     assert_ne!(status_color("Running"), default);
     assert_ne!(status_color("Idle"), default);
     assert_ne!(status_color("Stopped"), default);

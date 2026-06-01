@@ -1,9 +1,10 @@
 pub mod attribution;
+pub mod graph;
 pub mod icons;
+pub mod model;
 pub mod performance;
 pub mod processes;
 pub mod services;
 pub mod settings;
-pub mod sidebar;
 pub mod startup;
 pub mod widgets;

@@ -66,7 +66,7 @@ impl Sampler {
     pub fn start(
         refresh_ms: Arc<AtomicU64>,
         attribution_enabled: Arc<AtomicBool>,
-        ctx: egui::Context,
+        gpu_enabled: Arc<AtomicBool>,
     ) -> Self {
         // Default off: the app opens on Performance, so the process table stays
         // empty until the user first visits the Processes tab.
@@ -89,7 +89,15 @@ impl Sampler {
         let active_t = processes_active.clone();
         thread::Builder::new()
             .name("rproc-sampler".into())
-            .spawn(move || sampler_loop(inner_t, refresh_ms, active_t, attribution_enabled, ctx))
+            .spawn(move || {
+                sampler_loop(
+                    inner_t,
+                    refresh_ms,
+                    active_t,
+                    attribution_enabled,
+                    gpu_enabled,
+                )
+            })
             .expect("spawn sampler");
         Self {
             inner,
@@ -114,7 +122,7 @@ fn sampler_loop(
     refresh_ms: Arc<AtomicU64>,
     processes_active: Arc<AtomicBool>,
     attribution_enabled: Arc<AtomicBool>,
-    ctx: egui::Context,
+    gpu_enabled: Arc<AtomicBool>,
 ) {
     // `System::new()` + a CPU refresh avoids `new_all()`'s upfront scan of
     // every PID's cmdline/exe/environ. The loop below repopulates the process
@@ -127,7 +135,10 @@ fn sampler_loop(
     let mut disks = Disks::new_with_refreshed_list();
     let mut components = Components::new_with_refreshed_list();
     let mut users = Users::new_with_refreshed_list();
-    let mut gpu_collector = gpu::GpuCollector::init();
+    // Lazily initialized: keeping it `None` until GPU monitoring is actually on
+    // means NVML/libcuda (~20 MB resident on NVIDIA) is never loaded when the
+    // user has GPU monitoring disabled.
+    let mut gpu_collector: Option<gpu::GpuCollector> = None;
     let mut gpu_attr = gpu_attribution::GpuAttribution::init();
 
     // Start from whatever's been published (the prefill from disk) so we
@@ -165,6 +176,11 @@ fn sampler_loop(
         // When hidden we keep the previous list so the tab paints it on reopen.
         let want_procs = processes_active.load(Ordering::Relaxed);
         let want_attr = attribution_enabled.load(Ordering::Relaxed);
+        // Init NVML on first enable; once off-at-launch it's simply never loaded.
+        let want_gpu = gpu_enabled.load(Ordering::Relaxed);
+        if want_gpu && gpu_collector.is_none() {
+            gpu_collector = Some(gpu::GpuCollector::init());
+        }
         let mut attribution = attribution::Attribution::default();
         if want_procs || want_attr {
             // Attribution needs only pid/name + CPU/mem/disk; the Processes
@@ -184,7 +200,11 @@ fn sampler_loop(
             sys.refresh_processes_specifics(ProcessesToUpdate::All, true, kind);
             if want_attr {
                 attribution = attribution::collect(&sys, delta_secs);
-                attribution.gpu = gpu_attr.sample(&sys, gpu_collector.nvml(), delta_secs);
+                attribution.gpu = gpu_attr.sample(
+                    &sys,
+                    gpu_collector.as_ref().and_then(|c| c.nvml()),
+                    delta_secs,
+                );
             }
             if want_procs {
                 users.refresh();
@@ -197,7 +217,14 @@ fn sampler_loop(
         components.refresh(true);
 
         let summary = system::SystemSummary::collect(&sys, &nets, &disks, &components, delta_secs);
-        let gpus = gpu_collector.sample();
+        let gpus = if want_gpu {
+            gpu_collector
+                .as_mut()
+                .map(|c| c.sample())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
 
         push_capped(
             &mut working.history.cpu_total,
@@ -312,9 +339,8 @@ fn sampler_loop(
         // Publish: one Snapshot clone per tick (≈1 Hz at default settings)
         // instead of one per UI frame.
         *out.lock().unwrap() = Arc::new(working.clone());
-        // Wake the UI now rather than at its next interval-tied repaint, so a
-        // just-collected process list shows immediately after the tab opens.
-        ctx.request_repaint();
+        // The UI polls the published snapshot on its own Slint timer, so there
+        // is no UI handle to wake here — the next poll picks this up.
 
         let elapsed = now.elapsed();
         let target = Duration::from_millis(

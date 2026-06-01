@@ -12,14 +12,13 @@ use freedesktop::{build_index, compute_icon_uri, has_entry};
 /// system icon theme.
 ///
 /// The expensive work — building the `.desktop` index and the per-icon theme
-/// `stat()` scans — runs on a worker thread so it never blocks the UI frame. A
-/// cache miss enqueues a request and renders a placeholder; the icon pops in a
-/// frame or two later once the worker answers and wakes the UI via
-/// [`egui::Context::request_repaint`]. Results persist to `~/.cache/rproc/icons.tsv`,
-/// so a warm cache serves most rows from memory without touching the worker.
+/// `stat()` scans — runs on a worker thread so it never blocks the UI. A cache
+/// miss enqueues a request and renders a placeholder; the icon pops in once the
+/// worker answers and the next UI poll reads the filled cache. Results persist
+/// to `~/.cache/rproc/icons.tsv`, so a warm cache serves most rows from memory
+/// without touching the worker.
 pub struct Resolver {
-    /// Spawned lazily on the first [`Resolver::pump`], once an `egui::Context`
-    /// exists to wake the UI from.
+    /// Spawned lazily on the first [`Resolver::pump`].
     worker: Option<Worker>,
     /// `.desktop` index keys, reported by the worker once built. `None` until
     /// then — see [`Resolver::has_desktop_entry`].
@@ -78,10 +77,10 @@ impl Resolver {
     }
 
     /// Drains the worker's results and spawns it on first call. Must run once
-    /// per frame before any `icon_uri` / `has_desktop_entry` query.
-    pub fn pump(&mut self, ctx: &egui::Context) {
+    /// per UI poll before any `icon_uri` / `has_desktop_entry` query.
+    pub fn pump(&mut self) {
         if self.worker.is_none() {
-            self.worker = Some(spawn_worker(ctx.clone()));
+            self.worker = Some(spawn_worker());
         }
         while let Ok(resp) = self.worker.as_ref().unwrap().rx.try_recv() {
             match resp {
@@ -188,7 +187,7 @@ impl Resolver {
     }
 }
 
-fn spawn_worker(ctx: egui::Context) -> Worker {
+fn spawn_worker() -> Worker {
     let (req_tx, req_rx) = mpsc::channel::<Request>();
     let (res_tx, res_rx) = mpsc::channel::<Response>();
     std::thread::Builder::new()
@@ -201,7 +200,6 @@ fn spawn_worker(ctx: egui::Context) -> Worker {
             {
                 return;
             }
-            ctx.request_repaint();
             // Memoizes `icon_name` → URI so processes sharing an icon pay the
             // theme stat() scan once.
             let mut icon_cache: HashMap<String, Option<String>> = HashMap::new();
@@ -215,9 +213,6 @@ fn spawn_worker(ctx: egui::Context) -> Worker {
                 if res_tx.send(Response::Resolved { key, uri }).is_err() {
                     break;
                 }
-                // Paint the icon now instead of waiting for the next scheduled
-                // repaint; egui coalesces a cold-load burst into one extra frame.
-                ctx.request_repaint();
             }
         })
         .expect("failed to spawn icon-resolver thread");
@@ -225,6 +220,55 @@ fn spawn_worker(ctx: egui::Context) -> Worker {
         tx: req_tx,
         rx: res_rx,
     }
+}
+
+/// Decode an icon file and downscale it to `size`×`size` device pixels. Process
+/// rows render icons at ~16 px, but themed icons on disk are often 48–256 px (or
+/// scalable SVG); keeping them at native resolution made the resident image
+/// cache balloon to tens of MB. Rasterizing to display size up front caps each
+/// cached icon at a couple of KB. Returns `None` on any decode error.
+pub fn decode_scaled(path: &Path, size: u32) -> Option<slint::Image> {
+    let svg = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("svg"));
+    if svg {
+        decode_svg(path, size)
+    } else {
+        decode_raster(path, size)
+    }
+}
+
+fn buffer_from_bytes(src: &[u8], size: u32) -> Option<slint::SharedPixelBuffer<slint::Rgba8Pixel>> {
+    let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(size, size);
+    let dst = buf.make_mut_bytes();
+    if dst.len() != src.len() {
+        return None;
+    }
+    dst.copy_from_slice(src);
+    Some(buf)
+}
+
+fn decode_raster(path: &Path, size: u32) -> Option<slint::Image> {
+    let img = image::open(path).ok()?.to_rgba8();
+    let scaled = image::imageops::resize(&img, size, size, image::imageops::FilterType::Triangle);
+    let buf = buffer_from_bytes(scaled.as_raw(), size)?;
+    Some(slint::Image::from_rgba8(buf))
+}
+
+fn decode_svg(path: &Path, size: u32) -> Option<slint::Image> {
+    let data = fs::read(path).ok()?;
+    // Default options keep an empty font database — icons rarely carry text, and
+    // loading the system fonts here would map tens of MB just to draw a glyph.
+    let opt = resvg::usvg::Options::default();
+    let tree = resvg::usvg::Tree::from_data(&data, &opt).ok()?;
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(size, size)?;
+    let ts = tree.size();
+    let scale = size as f32 / ts.width().max(ts.height()).max(1.0);
+    let transform = resvg::tiny_skia::Transform::from_scale(scale, scale);
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+    let buf = buffer_from_bytes(pixmap.data(), size)?;
+    Some(slint::Image::from_rgba8_premultiplied(buf))
 }
 
 /// `proc_name` and `exe_path` joined by a NUL (which occurs in neither), so

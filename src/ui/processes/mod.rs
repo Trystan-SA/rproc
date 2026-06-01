@@ -1,31 +1,49 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
-use egui_extras::{Column, TableBuilder, TableRow};
+use slint::{Image, ModelRc, SharedString, VecModel};
 
 use crate::monitor::{self, Snapshot};
 use crate::theme;
 use crate::ui::icons;
 use crate::ui::widgets;
+use crate::{MainWindow, ProcRow};
 
 mod actions;
 mod grouping;
-mod properties;
+pub mod properties;
 mod sort;
 
-use actions::{open_in_file_manager, open_search};
+pub(crate) use actions::{copy_to_clipboard, open_in_file_manager, open_search};
 use grouping::{Group, Row, append_section, build_groups, sort_children, sort_groups};
-use properties::{ProcessPropertiesView, build_properties_view, render_properties_window};
 use sort::{SortKey, load_sort_prefs, save_sort_prefs};
+
+/// Pixel size icons are rasterized to. Rows render them at ~16 px; a touch more
+/// keeps them crisp without bloating the cache.
+const ICON_PX: u32 = 20;
+
+/// What a visible row points at, so a click by model index can resolve to a
+/// selection without re-deriving the table.
+#[derive(Clone)]
+pub enum RowRef {
+    Section,
+    Group(String),
+    Proc(u32),
+}
 
 pub struct State {
     sort: SortKey,
     descending: bool,
-    selected_pid: Option<u32>,
-    selected_group: Option<String>,
+    pub selected_pid: Option<u32>,
+    pub selected_group: Option<String>,
     expanded: HashSet<String>,
-    filter: String,
+    pub filter: String,
     icons: icons::Resolver,
-    properties: Option<ProcessPropertiesView>,
+    images: HashMap<String, Image>,
+    row_refs: Vec<RowRef>,
+    /// Persistent row model — updated in place so clicks aren't dropped when a
+    /// refresh tick lands between a row's press and release.
+    rows_model: Rc<VecModel<ProcRow>>,
 }
 
 impl State {
@@ -39,19 +57,66 @@ impl State {
             expanded: HashSet::new(),
             filter: String::new(),
             icons: icons::Resolver::new(),
-            properties: None,
+            images: HashMap::new(),
+            row_refs: Vec::new(),
+            rows_model: Rc::new(VecModel::default()),
         }
     }
 
-    /// Flush the persistent icon cache to disk. Called from `App::on_exit`.
     pub fn save_icon_cache(&mut self) {
         self.icons.save_persistent();
     }
 
-    /// Throttled per-frame flush of the icon cache, so a non-clean shutdown
-    /// (one that skips `on_exit`) loses at most a few seconds of resolved icons.
     pub fn flush_icon_cache_if_due(&mut self) {
         self.icons.flush_if_due();
+    }
+
+    pub fn toggle_sort(&mut self, key: i32) {
+        let key = key_from_int(key);
+        if self.sort == key {
+            self.descending = !self.descending;
+        } else {
+            self.sort = key;
+            self.descending = matches!(key, SortKey::Cpu | SortKey::Mem | SortKey::Disk);
+        }
+        save_sort_prefs(self.sort, self.descending);
+    }
+
+    pub fn toggle_group(&mut self, name: &str) {
+        if !self.expanded.remove(name) {
+            self.expanded.insert(name.to_string());
+        }
+    }
+
+    pub fn row_clicked(&mut self, index: usize) {
+        match self.row_refs.get(index).cloned() {
+            Some(RowRef::Proc(pid)) => {
+                self.selected_pid = Some(pid);
+                self.selected_group = None;
+            }
+            Some(RowRef::Group(name)) => {
+                self.selected_group = Some(name);
+                self.selected_pid = None;
+            }
+            _ => {}
+        }
+    }
+
+    fn image_for(&mut self, name: &str, exe: &str) -> Image {
+        match self.icons.icon_uri(name, exe) {
+            Some(uri) => {
+                if let Some(img) = self.images.get(&uri) {
+                    return img.clone();
+                }
+                // Rasterize to display size (not native) so the cache stays tiny.
+                let path = uri.strip_prefix("file://").unwrap_or(&uri);
+                let img =
+                    icons::decode_scaled(std::path::Path::new(path), ICON_PX).unwrap_or_default();
+                self.images.insert(uri, img.clone());
+                img
+            }
+            None => Image::default(),
+        }
     }
 }
 
@@ -61,58 +126,12 @@ impl Default for State {
     }
 }
 
-pub fn show(ui: &mut egui::Ui, state: &mut State, snap: &Snapshot) {
-    // Must run before the apps/background partition below, which queries
-    // `has_desktop_entry`.
-    state.icons.pump(ui.ctx());
+fn ss(s: &str) -> SharedString {
+    s.into()
+}
 
-    // Title row + selection actions on the right.
-    ui.horizontal(|ui| {
-        ui.heading("Processes");
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if let Some(pid) = state.selected_pid {
-                if ui.button("Force kill").clicked() {
-                    let _ = monitor::processes::force_kill(pid);
-                    state.selected_pid = None;
-                }
-                if ui.button("End task").clicked() {
-                    let _ = monitor::processes::terminate(pid);
-                    state.selected_pid = None;
-                }
-            } else if let Some(name) = state.selected_group.as_deref() {
-                let pids: Vec<u32> = snap
-                    .processes
-                    .iter()
-                    .filter(|p| p.name == name)
-                    .map(|p| p.pid)
-                    .collect();
-                let n = pids.len();
-                let force = ui.button(format!("Force kill ({n})")).clicked();
-                let end = ui.button(format!("End task ({n})")).clicked();
-                if force {
-                    for pid in &pids {
-                        let _ = monitor::processes::force_kill(*pid);
-                    }
-                    state.selected_group = None;
-                } else if end {
-                    for pid in &pids {
-                        let _ = monitor::processes::terminate(*pid);
-                    }
-                    state.selected_group = None;
-                }
-            } else {
-                ui.add_enabled(false, egui::Button::new("End task"));
-            }
-            ui.add_space(8.0);
-            ui.add(
-                egui::TextEdit::singleline(&mut state.filter)
-                    .hint_text("Filter by name or PID")
-                    .desired_width(220.0),
-            );
-        });
-    });
-
-    ui.add_space(8.0);
+pub fn apply(window: &MainWindow, state: &mut State, snap: &Snapshot) {
+    state.icons.pump();
 
     let filter = state.filter.trim().to_lowercase();
     let filter_active = !filter.is_empty();
@@ -124,9 +143,6 @@ pub fn show(ui: &mut egui::Ui, state: &mut State, snap: &Snapshot) {
     };
 
     let groups: Vec<Group> = build_groups(&snap.processes, &matches);
-
-    // Apps (have a .desktop entry) on top, background processes below. Each
-    // section sorts on its own so a busy daemon never jumps above the apps.
     let (mut apps, mut services): (Vec<Group>, Vec<Group>) = groups.into_iter().partition(|g| {
         g.procs
             .iter()
@@ -149,356 +165,179 @@ pub fn show(ui: &mut egui::Ui, state: &mut State, snap: &Snapshot) {
         &state.expanded,
     );
 
-    let total = snap.processes.len();
-    let total_cpu_used: f32 = snap.system.cpu_total;
-    let total_mem_used: f32 = snap.system.ram_used_pct;
     let selected_pid = state.selected_pid;
     let selected_group = state.selected_group.clone();
 
-    // Deferred mutations: the rows closure can't easily reach `state` because
-    // the table cell closures move captures around. Collect events here and
-    // apply them after the table is done.
-    let mut toggle_group: Option<String> = None;
-    let mut click_pid: Option<u32> = None;
-    let mut click_group: Option<String> = None;
-    let mut open_properties_pid: Option<u32> = None;
-    let icons = &mut state.icons;
-    let sort = &mut state.sort;
-    let descending = &mut state.descending;
+    let mut rows: Vec<ProcRow> = Vec::with_capacity(visible.len());
+    let mut refs: Vec<RowRef> = Vec::with_capacity(visible.len());
 
-    egui::Frame::new()
-        .fill(theme::PANEL_BG)
-        .corner_radius(egui::CornerRadius::same(8))
-        .inner_margin(egui::Margin::same(8))
-        .show(ui, |ui| {
-            let header_height = 26.0;
-            let row_height = 22.0;
-            let section_height = 30.0;
-
-            TableBuilder::new(ui)
-                .striped(true)
-                .resizable(true)
-                .sense(egui::Sense::click())
-                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                .column(Column::initial(260.0).at_least(140.0).clip(true))
-                .column(Column::initial(60.0).at_least(50.0))
-                .column(Column::initial(100.0).at_least(70.0))
-                .column(Column::initial(80.0).at_least(60.0))
-                .column(Column::initial(100.0).at_least(80.0))
-                .column(Column::initial(120.0).at_least(90.0))
-                .column(Column::remainder().at_least(70.0))
-                .header(header_height, |mut header| {
-                    header.col(|ui| {
-                        sortable_header(ui, "Name", SortKey::Name, sort, descending);
-                    });
-                    header.col(|ui| {
-                        sortable_header(ui, "PID", SortKey::Pid, sort, descending);
-                    });
-                    header.col(|ui| {
-                        sortable_header(ui, "User", SortKey::User, sort, descending);
-                    });
-                    header.col(|ui| {
-                        sortable_header(
-                            ui,
-                            &format!("CPU  {:.0}%", total_cpu_used),
-                            SortKey::Cpu,
-                            sort,
-                            descending,
-                        );
-                    });
-                    header.col(|ui| {
-                        sortable_header(
-                            ui,
-                            &format!("Memory  {:.0}%", total_mem_used),
-                            SortKey::Mem,
-                            sort,
-                            descending,
-                        );
-                    });
-                    header.col(|ui| {
-                        sortable_header(ui, "Disk (R+W)", SortKey::Disk, sort, descending);
-                    });
-                    header.col(|ui| {
-                        sortable_header(ui, "Status", SortKey::Status, sort, descending);
-                    });
-                })
-                .body(|body| {
-                    let heights = visible.iter().map(|r| match r {
-                        Row::SectionHeader(_) => section_height,
-                        _ => row_height,
-                    });
-                    body.heterogeneous_rows(heights, |mut row| {
-                        let idx = row.index();
-                        match visible[idx] {
-                            Row::SectionHeader(title) => {
-                                render_section_header(&mut row, title);
-                            }
-                            Row::GroupHeader { g, expanded } => {
-                                row.set_selected(selected_group.as_deref() == Some(g.name));
-                                render_group_header(
-                                    &mut row,
-                                    g,
-                                    expanded,
-                                    &mut toggle_group,
-                                    icons,
-                                );
-                                let resp = row
-                                    .response()
-                                    .on_hover_cursor(egui::CursorIcon::PointingHand);
-                                if resp.clicked() || resp.secondary_clicked() {
-                                    click_group = Some(g.name.to_string());
-                                }
-                                resp.context_menu(|ui| {
-                                    group_context_menu(ui, g, &mut open_properties_pid)
-                                });
-                            }
-                            Row::Single(p) => {
-                                row.set_selected(selected_pid == Some(p.pid));
-                                render_proc_row(&mut row, p, false, icons);
-                                let resp = row
-                                    .response()
-                                    .on_hover_cursor(egui::CursorIcon::PointingHand);
-                                if resp.clicked() || resp.secondary_clicked() {
-                                    click_pid = Some(p.pid);
-                                }
-                                resp.context_menu(|ui| {
-                                    proc_context_menu(ui, p, &mut open_properties_pid)
-                                });
-                            }
-                            Row::Child(p) => {
-                                row.set_selected(selected_pid == Some(p.pid));
-                                render_proc_row(&mut row, p, true, icons);
-                                let resp = row
-                                    .response()
-                                    .on_hover_cursor(egui::CursorIcon::PointingHand);
-                                if resp.clicked() || resp.secondary_clicked() {
-                                    click_pid = Some(p.pid);
-                                }
-                                resp.context_menu(|ui| {
-                                    proc_context_menu(ui, p, &mut open_properties_pid)
-                                });
-                            }
-                        }
-                    });
+    for row in &visible {
+        match row {
+            Row::SectionHeader(title) => {
+                rows.push(section_row(&title.to_uppercase()));
+                refs.push(RowRef::Section);
+            }
+            Row::GroupHeader { g, expanded } => {
+                let (name, exe) = g
+                    .procs
+                    .first()
+                    .map(|p| (p.name.clone(), p.exe.clone()))
+                    .unwrap_or_default();
+                let icon = state.image_for(&name, &exe);
+                rows.push(ProcRow {
+                    kind: 1,
+                    label: ss(g.name),
+                    pid: 0,
+                    pid_text: ss(""),
+                    user: ss(""),
+                    cpu: ss(&format_pct(g.cpu_pct)),
+                    mem: ss(&widgets::format_bytes(g.mem_bytes)),
+                    disk: ss(&widgets::format_bps(g.disk_bps)),
+                    disk_tooltip: ss(""),
+                    status: ss(""),
+                    status_color: theme::text(),
+                    icon,
+                    expanded: *expanded,
+                    selected: selected_group.as_deref() == Some(g.name),
+                    group_key: ss(g.name),
+                    count: g.procs.len() as i32,
+                    indent: false,
                 });
-        });
-
-    if let Some(name) = toggle_group
-        && !state.expanded.remove(&name)
-    {
-        state.expanded.insert(name);
+                refs.push(RowRef::Group(g.name.to_string()));
+            }
+            Row::Single(p) => {
+                rows.push(proc_row(state, p, false, selected_pid));
+                refs.push(RowRef::Proc(p.pid));
+            }
+            Row::Child(p) => {
+                rows.push(proc_row(state, p, true, selected_pid));
+                refs.push(RowRef::Proc(p.pid));
+            }
+        }
     }
-    if let Some(pid) = click_pid {
-        state.selected_pid = Some(pid);
-        state.selected_group = None;
-    } else if let Some(name) = click_group {
-        state.selected_group = Some(name);
+
+    state.row_refs = refs;
+    crate::ui::model::sync(&state.rows_model, rows);
+    window.set_proc_rows(ModelRc::from(state.rows_model.clone()));
+    window.set_proc_count_label(ss(&format!("{} processes", snap.processes.len())));
+    window.set_proc_sampling(snap.ready);
+    window.set_proc_sort_key(int_from_key(state.sort));
+    window.set_proc_sort_desc(state.descending);
+    window.set_proc_cpu_header(ss(&format!("CPU  {:.0}%", snap.system.cpu_total)));
+    window.set_proc_mem_header(ss(&format!("Memory  {:.0}%", snap.system.ram_used_pct)));
+
+    // Drop a stale selection when its process / group is gone.
+    if let Some(pid) = state.selected_pid
+        && !snap.processes.iter().any(|p| p.pid == pid)
+    {
         state.selected_pid = None;
     }
-    if let Some(pid) = open_properties_pid {
-        let same = matches!(&state.properties, Some(v) if v.pid == pid);
-        if !same && let Some(p) = snap.processes.iter().find(|p| p.pid == pid) {
-            state.properties = Some(build_properties_view(p));
-        }
+    if let Some(name) = state.selected_group.clone()
+        && !snap.processes.iter().any(|p| p.name == name)
+    {
+        state.selected_group = None;
     }
-    render_properties_window(ui.ctx(), &mut state.properties, snap);
 
-    ui.add_space(8.0);
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(format!("{total} processes"))
-                .color(theme::TEXT_DIM)
-                .small(),
-        );
-        if !snap.ready {
-            ui.label(
-                egui::RichText::new("  · sampling…")
-                    .color(theme::TEXT_DIM)
-                    .small(),
-            );
-        }
-    });
+    window.set_proc_selected_pid(state.selected_pid.map(|p| p as i32).unwrap_or(-1));
+    window.set_proc_selected_group(ss(state.selected_group.as_deref().unwrap_or("")));
+    let count = state
+        .selected_group
+        .as_deref()
+        .map(|name| snap.processes.iter().filter(|p| p.name == name).count())
+        .unwrap_or(0);
+    window.set_proc_selected_count(count as i32);
+    let suspend_label = state
+        .selected_pid
+        .and_then(|pid| snap.processes.iter().find(|p| p.pid == pid))
+        .map(|p| {
+            if matches!(p.status.as_str(), "Stop" | "Stopped") {
+                "Resume"
+            } else {
+                "Suspend"
+            }
+        })
+        .unwrap_or("Suspend");
+    window.set_proc_suspend_label(ss(suspend_label));
 }
 
-fn render_section_header(row: &mut TableRow<'_, '_>, title: &str) {
-    row.col(|ui| {
-        ui.add_space(8.0);
-        ui.add(
-            egui::Label::new(
-                egui::RichText::new(title.to_uppercase())
-                    .color(theme::ACCENT)
-                    .strong(),
-            )
-            .selectable(false),
-        );
-    });
-    // Leave the remaining six columns blank — the header is a divider, not a
-    // data row.
-    for _ in 0..6 {
-        row.col(|_| {});
+fn section_row(title: &str) -> ProcRow {
+    ProcRow {
+        kind: 0,
+        label: ss(title),
+        pid: 0,
+        pid_text: ss(""),
+        user: ss(""),
+        cpu: ss(""),
+        mem: ss(""),
+        disk: ss(""),
+        disk_tooltip: ss(""),
+        status: ss(""),
+        status_color: theme::text(),
+        icon: Image::default(),
+        expanded: false,
+        selected: false,
+        group_key: ss(""),
+        count: 0,
+        indent: false,
     }
 }
 
-fn render_group_header(
-    row: &mut TableRow<'_, '_>,
-    g: &Group<'_>,
-    expanded: bool,
-    toggle: &mut Option<String>,
-    icons: &mut icons::Resolver,
-) {
-    let icon_uri = g
-        .procs
-        .first()
-        .and_then(|p| icons.icon_uri(&p.name, &p.exe));
-    row.col(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        let (rect, arrow_resp) =
-            ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::click());
-        let dir = if expanded {
-            CaretDir::Down
-        } else {
-            CaretDir::Right
-        };
-        draw_caret(ui.painter(), rect, theme::TEXT, dir);
-        let arrow_resp = arrow_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
-        draw_icon(ui, icon_uri.as_deref());
-        ui.add(
-            egui::Label::new(
-                egui::RichText::new(format!("{}  ({})", g.name, g.procs.len())).strong(),
-            )
-            .truncate()
-            .selectable(false),
-        );
-        if arrow_resp.clicked() {
-            *toggle = Some(g.name.to_string());
-        }
-    });
-    row.col(|_| {});
-    row.col(|_| {});
-    row.col(|ui| {
-        ui.label(egui::RichText::new(format_pct(g.cpu_pct)).strong());
-    });
-    row.col(|ui| {
-        ui.label(egui::RichText::new(widgets::format_bytes(g.mem_bytes)).strong());
-    });
-    row.col(|ui| {
-        ui.label(egui::RichText::new(widgets::format_bps(g.disk_bps)).strong());
-    });
-    row.col(|_| {});
-}
-
-fn render_proc_row(
-    row: &mut TableRow<'_, '_>,
+fn proc_row(
+    state: &mut State,
     p: &monitor::processes::ProcInfo,
     indent: bool,
-    icons: &mut icons::Resolver,
-) {
-    let icon_uri = icons.icon_uri(&p.name, &p.exe);
-    row.col(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        if indent {
-            ui.add_space(20.0);
-        }
-        draw_icon(ui, icon_uri.as_deref());
-        let resp = ui.add(egui::Label::new(&p.name).truncate().selectable(false));
-        resp.on_hover_text(if p.cmd.is_empty() { &p.exe } else { &p.cmd });
-    });
-    row.col(|ui| {
-        ui.label(p.pid.to_string());
-    });
-    row.col(|ui| {
-        ui.label(&p.user);
-    });
-    row.col(|ui| {
-        ui.label(format_pct(p.cpu_pct));
-    });
-    row.col(|ui| {
-        ui.label(widgets::format_bytes(p.mem_bytes));
-    });
-    row.col(|ui| {
-        let combined = p.disk_read_bps + p.disk_write_bps;
-        let resp = ui.label(widgets::format_bps(combined));
-        resp.on_hover_text(format!(
+    selected_pid: Option<u32>,
+) -> ProcRow {
+    let icon = state.image_for(&p.name, &p.exe);
+    let combined = p.disk_read_bps + p.disk_write_bps;
+    ProcRow {
+        kind: if indent { 3 } else { 2 },
+        label: ss(&p.name),
+        pid: p.pid as i32,
+        pid_text: ss(&p.pid.to_string()),
+        user: ss(&p.user),
+        cpu: ss(&format_pct(p.cpu_pct)),
+        mem: ss(&widgets::format_bytes(p.mem_bytes)),
+        disk: ss(&widgets::format_bps(combined)),
+        disk_tooltip: ss(&format!(
             "Read: {}\nWrite: {}",
             widgets::format_bps(p.disk_read_bps),
-            widgets::format_bps(p.disk_write_bps),
-        ));
-    });
-    row.col(|ui| {
-        ui.label(egui::RichText::new(&p.status).color(status_color(&p.status)));
-    });
-}
-
-fn sortable_header(
-    ui: &mut egui::Ui,
-    label: &str,
-    key: SortKey,
-    sort: &mut SortKey,
-    descending: &mut bool,
-) {
-    let is_active = *sort == key;
-    let color = if is_active {
-        theme::TEXT
-    } else {
-        theme::TEXT_DIM
-    };
-    let dir = if !is_active || *descending {
-        CaretDir::Down
-    } else {
-        CaretDir::Up
-    };
-
-    let resp = ui
-        .horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            ui.add(egui::Label::new(egui::RichText::new(label).strong()).selectable(false));
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(9.0, 9.0), egui::Sense::hover());
-            draw_caret(ui.painter(), rect, color, dir);
-        })
-        .response
-        .interact(egui::Sense::click())
-        .on_hover_cursor(egui::CursorIcon::PointingHand);
-
-    if resp.clicked() {
-        if *sort == key {
-            *descending = !*descending;
-        } else {
-            *sort = key;
-            *descending = matches!(key, SortKey::Cpu | SortKey::Mem | SortKey::Disk);
-        }
-        save_sort_prefs(*sort, *descending);
+            widgets::format_bps(p.disk_write_bps)
+        )),
+        status: ss(&p.status),
+        status_color: status_color(&p.status),
+        icon,
+        expanded: false,
+        selected: selected_pid == Some(p.pid),
+        group_key: ss(""),
+        count: 0,
+        indent,
     }
 }
 
-#[derive(Copy, Clone)]
-enum CaretDir {
-    Down,
-    Up,
-    Right,
+fn key_from_int(k: i32) -> SortKey {
+    match k {
+        0 => SortKey::Name,
+        1 => SortKey::Pid,
+        2 => SortKey::User,
+        3 => SortKey::Cpu,
+        4 => SortKey::Mem,
+        5 => SortKey::Disk,
+        6 => SortKey::Status,
+        _ => SortKey::Cpu,
+    }
 }
 
-fn draw_caret(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32, dir: CaretDir) {
-    let c = rect.center();
-    let half_w = rect.width() * 0.5;
-    let half_h = rect.height() * 0.35;
-    let pts = match dir {
-        CaretDir::Down => vec![
-            egui::pos2(c.x - half_w, c.y - half_h),
-            egui::pos2(c.x + half_w, c.y - half_h),
-            egui::pos2(c.x, c.y + half_h),
-        ],
-        CaretDir::Up => vec![
-            egui::pos2(c.x - half_w, c.y + half_h),
-            egui::pos2(c.x + half_w, c.y + half_h),
-            egui::pos2(c.x, c.y - half_h),
-        ],
-        CaretDir::Right => vec![
-            egui::pos2(c.x - half_h, c.y - half_w),
-            egui::pos2(c.x - half_h, c.y + half_w),
-            egui::pos2(c.x + half_h, c.y),
-        ],
-    };
-    painter.add(egui::Shape::convex_polygon(pts, color, egui::Stroke::NONE));
+fn int_from_key(k: SortKey) -> i32 {
+    match k {
+        SortKey::Name => 0,
+        SortKey::Pid => 1,
+        SortKey::User => 2,
+        SortKey::Cpu => 3,
+        SortKey::Mem => 4,
+        SortKey::Disk => 5,
+        SortKey::Status => 6,
+    }
 }
 
 fn format_pct(v: f32) -> String {
@@ -511,174 +350,13 @@ fn format_pct(v: f32) -> String {
     }
 }
 
-fn proc_context_menu(
-    ui: &mut egui::Ui,
-    p: &monitor::processes::ProcInfo,
-    open_properties_pid: &mut Option<u32>,
-) {
-    ui.set_min_width(200.0);
-    if ui.button("End task").clicked() {
-        let _ = monitor::processes::terminate(p.pid);
-        ui.close();
-    }
-    if ui.button("Force kill").clicked() {
-        let _ = monitor::processes::force_kill(p.pid);
-        ui.close();
-    }
-    let is_stopped = matches!(p.status.as_str(), "Stop" | "Stopped");
-    let suspend_label = if is_stopped { "Resume" } else { "Suspend" };
-    if ui.button(suspend_label).clicked() {
-        if is_stopped {
-            let _ = monitor::processes::resume(p.pid);
-        } else {
-            let _ = monitor::processes::suspend(p.pid);
-        }
-        ui.close();
-    }
-    ui.separator();
-    let exe_path = std::path::Path::new(&p.exe);
-    let has_exe = !p.exe.is_empty() && exe_path.exists();
-    if ui
-        .add_enabled(has_exe, egui::Button::new("Open file location"))
-        .clicked()
-    {
-        open_in_file_manager(&p.exe);
-        ui.close();
-    }
-    if ui.button("Search online  \u{2197}").clicked() {
-        open_search(&p.name);
-        ui.close();
-    }
-    ui.separator();
-    if ui.button("Copy PID").clicked() {
-        ui.ctx().copy_text(p.pid.to_string());
-        ui.close();
-    }
-    if ui.button("Copy name").clicked() {
-        ui.ctx().copy_text(p.name.clone());
-        ui.close();
-    }
-    if ui
-        .add_enabled(!p.cmd.is_empty(), egui::Button::new("Copy command line"))
-        .clicked()
-    {
-        ui.ctx().copy_text(p.cmd.clone());
-        ui.close();
-    }
-    ui.separator();
-    if ui.button("Properties").clicked() {
-        *open_properties_pid = Some(p.pid);
-        ui.close();
-    }
-}
-
-fn group_context_menu(ui: &mut egui::Ui, g: &Group<'_>, open_properties_pid: &mut Option<u32>) {
-    ui.set_min_width(220.0);
-    let n = g.procs.len();
-    // Lowest PID ≈ the parent/oldest in the group — use it as the "main"
-    // process for actions that target a single representative (Properties,
-    // Open file location).
-    let main = g.procs.iter().min_by_key(|p| p.pid).copied();
-
-    if ui.button(format!("End all ({n})")).clicked() {
-        for p in &g.procs {
-            let _ = monitor::processes::terminate(p.pid);
-        }
-        ui.close();
-    }
-    if ui.button(format!("Force kill all ({n})")).clicked() {
-        for p in &g.procs {
-            let _ = monitor::processes::force_kill(p.pid);
-        }
-        ui.close();
-    }
-    let all_stopped = g
-        .procs
-        .iter()
-        .all(|p| matches!(p.status.as_str(), "Stop" | "Stopped"));
-    let suspend_label = if all_stopped {
-        format!("Resume all ({n})")
-    } else {
-        format!("Suspend all ({n})")
-    };
-    if ui.button(suspend_label).clicked() {
-        for p in &g.procs {
-            if all_stopped {
-                let _ = monitor::processes::resume(p.pid);
-            } else {
-                let _ = monitor::processes::suspend(p.pid);
-            }
-        }
-        ui.close();
-    }
-    ui.separator();
-    if let Some(p) = main {
-        let exe_path = std::path::Path::new(&p.exe);
-        let has_exe = !p.exe.is_empty() && exe_path.exists();
-        if ui
-            .add_enabled(has_exe, egui::Button::new("Open file location"))
-            .clicked()
-        {
-            open_in_file_manager(&p.exe);
-            ui.close();
-        }
-    }
-    if ui.button("Search online  \u{2197}").clicked() {
-        open_search(g.name);
-        ui.close();
-    }
-    ui.separator();
-    if ui.button("Copy name").clicked() {
-        ui.ctx().copy_text(g.name.to_string());
-        ui.close();
-    }
-    if ui.button("Copy all PIDs").clicked() {
-        let pids = g
-            .procs
-            .iter()
-            .map(|p| p.pid.to_string())
-            .collect::<Vec<_>>()
-            .join(" ");
-        ui.ctx().copy_text(pids);
-        ui.close();
-    }
-    if let Some(p) = main {
-        ui.separator();
-        if ui.button("Properties (main process)").clicked() {
-            *open_properties_pid = Some(p.pid);
-            ui.close();
-        }
-    }
-}
-
-fn draw_icon(ui: &mut egui::Ui, uri: Option<&str>) {
-    let size = egui::Vec2::splat(16.0);
-    if let Some(uri) = uri {
-        let image = egui::Image::new(uri)
-            .fit_to_exact_size(size)
-            .maintain_aspect_ratio(true)
-            .show_loading_spinner(false);
-        // Probe the decode up front: the extension filter only guarantees a
-        // loadable extension, not a decodable file. Fall back to the gear
-        // glyph on error / missing format support so we don't show a
-        // broken-image glyph in the row.
-        if image.load_for_size(ui.ctx(), size).is_ok() {
-            ui.add(image);
-            return;
-        }
-    }
-    ui.add(egui::Label::new(
-        egui::RichText::new("⚙").color(theme::TEXT_DIM).size(14.0),
-    ));
-}
-
-fn status_color(s: &str) -> egui::Color32 {
+fn status_color(s: &str) -> slint::Color {
     match s {
-        "Run" | "Running" => theme::OK,
-        "Sleep" | "Sleeping" | "Idle" => theme::TEXT_DIM,
-        "Waiting" | "Stop" | "Stopped" => theme::WARN,
-        "Zombie" | "Dead" => theme::ERR,
-        _ => theme::TEXT,
+        "Run" | "Running" => theme::ok(),
+        "Sleep" | "Sleeping" | "Idle" => theme::text_dim(),
+        "Waiting" | "Stop" | "Stopped" => theme::warn(),
+        "Zombie" | "Dead" => theme::err(),
+        _ => theme::text(),
     }
 }
 

@@ -41,7 +41,7 @@ pub(super) fn parse_time_filter(s: &str) -> Option<(Op, f64)> {
     rest.parse::<f64>().ok().map(|v| (op, v))
 }
 
-pub(super) fn format_boot_time(ms: Option<u64>) -> String {
+pub(crate) fn format_boot_time(ms: Option<u64>) -> String {
     match ms {
         None => "—".into(),
         Some(0) => "<1 ms".into(),

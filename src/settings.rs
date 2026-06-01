@@ -17,14 +17,22 @@ pub struct Settings {
     /// makes the sampler walk the full process table every tick, so the core
     /// stays lean until the user opts in. Read live by the sampler thread.
     attribution_enabled: Arc<AtomicBool>,
+    /// Whether GPU monitoring runs. On NVIDIA, initializing NVML pulls in
+    /// `libnvidia-ml`/`libcuda` (~20 MB resident), so this gates that init: when
+    /// off at launch, NVML is never loaded and the GPU cards/graphs are hidden.
+    /// Read live by the sampler thread (lazy-inits NVML when flipped on).
+    gpu_enabled: Arc<AtomicBool>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
             refresh_ms: Arc::new(AtomicU64::new(DEFAULT_REFRESH_MS)),
-            daemon_enabled: Arc::new(AtomicBool::new(true)),
+            // Off by default: the background daemon is a second process that also
+            // loads NVML/CUDA. Opt in for pre-filled history across restarts.
+            daemon_enabled: Arc::new(AtomicBool::new(false)),
             attribution_enabled: Arc::new(AtomicBool::new(false)),
+            gpu_enabled: Arc::new(AtomicBool::new(true)),
         }
     }
 }
@@ -65,6 +73,9 @@ impl Settings {
                     .store(matches!(value.trim(), "true" | "1"), Ordering::Relaxed),
                 "attribution_enabled" => settings
                     .attribution_enabled
+                    .store(matches!(value.trim(), "true" | "1"), Ordering::Relaxed),
+                "gpu_enabled" => settings
+                    .gpu_enabled
                     .store(matches!(value.trim(), "true" | "1"), Ordering::Relaxed),
                 _ => {}
             }
@@ -115,6 +126,21 @@ impl Settings {
         self.attribution_enabled.clone()
     }
 
+    pub fn gpu_enabled(&self) -> bool {
+        self.gpu_enabled.load(Ordering::Relaxed)
+    }
+
+    pub fn set_gpu_enabled(&self, enabled: bool) {
+        self.gpu_enabled.store(enabled, Ordering::Relaxed);
+        self.save();
+    }
+
+    /// Shared handle so the sampler thread can read the GPU toggle each tick and
+    /// lazily initialize NVML the first time it's turned on.
+    pub fn gpu_handle(&self) -> Arc<AtomicBool> {
+        self.gpu_enabled.clone()
+    }
+
     /// Persist the current settings to disk. Best-effort: any failure is
     /// logged to stderr but never propagates.
     fn save(&self) {
@@ -122,9 +148,10 @@ impl Settings {
             return;
         };
         let body = format!(
-            "daemon_enabled={}\nattribution_enabled={}\n",
+            "daemon_enabled={}\nattribution_enabled={}\ngpu_enabled={}\n",
             self.daemon_enabled.load(Ordering::Relaxed),
-            self.attribution_enabled.load(Ordering::Relaxed)
+            self.attribution_enabled.load(Ordering::Relaxed),
+            self.gpu_enabled.load(Ordering::Relaxed)
         );
         if let Err(e) = std::fs::write(&path, body) {
             eprintln!("rproc: failed to save settings: {e}");
