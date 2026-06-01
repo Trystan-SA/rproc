@@ -81,6 +81,7 @@ export component Startup inherits VerticalLayout {
         vertical-stretch: 1;
         VerticalLayout {
             spacing: 6px;
+            padding-right: 12px;
             if root.normal.length > 0: Text { text: "Startup apps & services"; color: Theme.text; font-weight: 700; }
             for e in root.normal: StartupCard {
                 data: e;

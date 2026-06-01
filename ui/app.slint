@@ -7,7 +7,7 @@ import { Processes } from "processes.slint";
 import { Services } from "services.slint";
 import { Startup } from "startup.slint";
 import { Settings } from "settings.slint";
-import { ScrollView } from "std-widgets.slint";
+import { ScrollView, Palette } from "std-widgets.slint";
 
 export { Theme }
 
@@ -18,6 +18,9 @@ export component MainWindow inherits Window {
     min-width: 480px;
     min-height: 400px;
     background: Theme.bg;
+    // Force std-widgets (ScrollView/Slider scrollbars) to their dark styling
+    // instead of following the system light scheme.
+    init => { Palette.color-scheme = ColorScheme.dark; }
 
     property <bool> compact: root.width < 900px;
 

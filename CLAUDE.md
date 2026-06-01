@@ -1,28 +1,48 @@
 # CLAUDE.md
 
 Guidance for working on **rproc** — a resource & process monitor for Linux,
-built with `eframe`/`egui`. This file captures the project's conventions so
-changes stay consistent and pass CI on the first try.
+built with `Slint` (software renderer). This file captures the project's
+conventions so changes stay consistent and pass CI on the first try.
 
 ## Project shape
 
 - Rust **edition 2024**, binary crate `rproc`.
-- GUI on `eframe`/`egui` (immediate-mode); system data via `sysinfo`, GPU via
-  `nvml-wrapper`.
+- GUI on `Slint`, rendered by the **software backend** (no GPU context, lowest
+  resident footprint); system data via `sysinfo`, GPU via `nvml-wrapper`.
+- The `.slint` views live at the crate root under `ui/` and are compiled by
+  `build.rs` (`slint::include_modules!()` in `main.rs` generates the Rust
+  bindings). `ui/` holds `app.slint` (the `MainWindow`), one file per tab,
+  plus `sidebar`, `widgets`, `structs`, `theme`.
 - Layout:
-  - `src/main.rs` — entry point.
-  - `src/app.rs` — top-level `eframe::App` state and frame loop.
+  - `src/main.rs` — entry point + `slint::include_modules!()`.
+  - `src/app.rs` — owns the `MainWindow`, the `Sampler`, per-tab state and the
+    `slint::Timer` that polls the snapshot and drives all callbacks.
   - `src/monitor/` — data collection (system, processes, services, startup,
     gpu, sampler). No UI here.
-  - `src/ui/` — egui rendering per tab (performance, processes, services,
-    startup, settings) plus `sidebar`, `widgets`, `icons`. No sampling logic
-    here.
+  - `src/ui/` — the **glue**: each tab maps a `Snapshot` into the Slint models
+    (`performance`, `processes`, `services`, `startup`, `settings`), plus
+    `icons`, `graph`, `model`, and the pure formatting/sorting/filter helpers.
+    No drawing here (that's the `.slint` files).
   - `src/daemon/` — background sampling daemon (`pidfile`, `storage`).
-  - `src/settings.rs`, `src/theme.rs` — config and styling.
+  - `src/settings.rs`, `src/theme.rs` — config and a few `slint::Color`s.
 
-Keep the **monitor (data) / ui (render)** separation intact: collection logic
-belongs under `src/monitor`, drawing belongs under `src/ui`. New optional or
-self-contained features go in their own module with minimal hooks elsewhere.
+Keep the **monitor (data) / ui (glue) / .slint (render)** separation intact:
+collection belongs under `src/monitor`, model-building under `src/ui`, drawing
+in `ui/*.slint`. The UI is retained-mode: update Slint model properties from
+the glue, don't try to "redraw". New optional or self-contained features go in
+their own module with minimal hooks elsewhere.
+
+### Slint / software-renderer gotchas
+
+- The software renderer can't take a dynamic `Path.commands` string, and `for`
+  is not allowed inside a `Path` — use a fixed set of child line elements
+  (graphs are 60-point polylines fed exactly 60 values; see `src/ui/graph.rs`).
+- Don't replace a list's `ModelRc` every tick (it recreates delegates and drops
+  in-flight clicks); reconcile a persistent `VecModel` in place via
+  `ui::model::sync`.
+- `Rectangle`'s `color` is reserved; name custom color props something else.
+- std-widgets follow the system light scheme — `MainWindow` forces
+  `Palette.color-scheme = ColorScheme.dark` so their scrollbars/sliders match.
 
 ## The hygiene loop — run before every commit
 
@@ -49,8 +69,16 @@ cargo build --release --locked
 - Add deps deliberately; this is a lean monitor. Prefer the standard library
   and existing crates over pulling in new ones.
 - Pin sensible versions in `Cargo.toml` and keep `default-features = false`
-  with explicit feature lists where the project already does (see `eframe`,
-  `egui_extras`, `image`).
+  with explicit feature lists where the project already does (see `slint`,
+  `image`, `resvg`). `slint` is pinned to an exact version and enables only
+  `backend-winit`, `renderer-software` and `software-renderer-path`; `resvg`
+  drops its `text` feature (icons are shapes, and `text` would pull `fontdb` +
+  system fontconfig).
+- **System build deps:** Slint's winit/font stack links `fontconfig` on Linux,
+  so building needs `libfontconfig1-dev` (plus `libxkbcommon-dev`, `libx11-dev`,
+  `libxcb1-dev`, `libwayland-dev`). The CI/release workflows install these; keep
+  them in sync if the dep set changes. No OpenGL dev package is needed (software
+  renderer).
 - After any dependency change: `cargo build --locked` and commit the resulting
   `Cargo.lock`.
 - The release profile is tuned for a small binary (`lto = "thin"`,
@@ -71,8 +99,9 @@ cargo build --release --locked
   must carry a `// SAFETY:` comment justifying it. Keep `unsafe` minimal and
   wrapped in a safe API.
 - **Don't block the UI thread.** Sampling that can stall (disk, NVML, process
-  enumeration) belongs in the monitor/daemon layer, not inline in a frame
-  callback. The frame loop must stay responsive.
+  enumeration) runs on the sampler thread; the UI only reads the published
+  `Snapshot`. Keep blocking work out of the timer tick and Slint callbacks so
+  the event loop stays responsive.
 - Follow existing idioms: borrow over clone where cheap, iterators over manual
   loops, `match` over nested `if let` when it reads clearer. Match the
   surrounding code's naming and comment density.

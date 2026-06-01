@@ -4,7 +4,7 @@
 
 **A resource & process monitor for Linux, inspired by the Windows 11 Task Manager.**
 
-Built in Rust with [`egui`](https://github.com/emilk/egui).
+Built in Rust with [`Slint`](https://slint.dev), rendered by its software backend (no GPU context) for a small memory footprint.
 
 [![CI](https://github.com/Trystan-SA/rproc/actions/workflows/ci.yml/badge.svg)](https://github.com/Trystan-SA/rproc/actions/workflows/ci.yml)
 [![Release](https://github.com/Trystan-SA/rproc/actions/workflows/release.yml/badge.svg)](https://github.com/Trystan-SA/rproc/actions/workflows/release.yml)
@@ -23,18 +23,24 @@ Built in Rust with [`egui`](https://github.com/emilk/egui).
 - **Per-process graph attribution** *(opt-in)*: hover a point on a Performance graph to see the top 5 processes behind that sample (CPU, RAM, disk and GPU). Off by default; enable it in Settings.
 - **Startup**: XDG autostart entries and enabled systemd units.
 - **Services**: systemctl system and user units.
-- **Settings**: adjustable refresh rate and the per-process attribution toggle.
+- **Settings**: adjustable refresh rate, GPU monitoring toggle (off avoids loading NVML/CUDA, ~20 MB), background-history toggle and the per-process attribution toggle.
 
 ### RAM Usage
 
-rproc is also kindly more optimized (in terms of RAM usage) than most resources monitor with similar features. 
+rproc is far more memory-frugal than most monitors with similar features. The
+Slint software renderer needs no OpenGL driver or texture atlas, GPU monitoring
+is an opt-out toggle (NVML/CUDA cost ~20 MB), and the background daemon is off
+by default.
 
 | Solution | RAM |
 | ------------- | ------------- |
-| rproc  | 130 (+35 MB optional deamon)  |
-| Gnome System Monitor | 185MB |
-| Resources | 200MB |
-| Mission Center | 239MB |
+| rproc (GPU off) | ~25 MB |
+| rproc (GPU on, default) | ~45 MB |
+| Gnome System Monitor | 185 MB |
+| Resources | 200 MB |
+| Mission Center | 239 MB |
+
+The optional background daemon adds ~28 MB while enabled.
 
 <div align="center">
   <img src="./img/capture2.png" alt="Processes tab" width="450">
@@ -91,7 +97,13 @@ inputs = {
 
 ### From source
 
-Requires the stable Rust toolchain ([rustup](https://rustup.rs/)).
+Requires the stable Rust toolchain ([rustup](https://rustup.rs/)) and a few
+system libraries. On Debian/Ubuntu:
+
+```bash
+sudo apt install pkg-config libfontconfig1-dev libxkbcommon-dev \
+    libx11-dev libxcb1-dev libwayland-dev
+```
 
 ```bash
 git clone https://github.com/Trystan-SA/rproc.git
@@ -106,14 +118,15 @@ cargo run --release
 
 ## Background sampling
 
-`rproc` keeps a 60-sample rolling window of system metrics
-(`~/.cache/rproc/history.bin`, ~2 KB, fixed size so
-re-opening the window shows the last minute of CPU and memory activity
-even after a full close. You can disable it in the settings page.
+`rproc` can keep a 60-sample rolling window of system metrics
+(`~/.cache/rproc/history.bin`, ~2 KB, fixed size) so re-opening the window
+shows the last minute of activity even after a full close.
 
-The collector runs as a detached background process, auto-spawned the
-first time you launch the GUI (`setsid`-detached, so closing rproc leaves
-it running). You can also start it on its own:
+It is **off by default** (the collector is a second process that also loads
+NVML/CUDA); enable *Background history* in the Settings page to turn it on.
+When enabled the collector runs as a detached background process
+(`setsid`-detached, so closing rproc leaves it running). You can also start it
+on its own:
 
 ```bash
 rproc --daemon
