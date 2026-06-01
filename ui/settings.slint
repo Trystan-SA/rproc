@@ -1,7 +1,7 @@
 import { Theme } from "theme.slint";
-import { Card, Toggle, StatRow } from "widgets.slint";
+import { Card, Toggle, StatRow, Check } from "widgets.slint";
 import { RefreshPreset } from "structs.slint";
-import { ScrollView, Slider, CheckBox } from "std-widgets.slint";
+import { ScrollView, Slider } from "std-widgets.slint";
 
 export component Settings inherits ScrollView {
     in property <[RefreshPreset]> presets;
@@ -37,8 +37,12 @@ export component Settings inherits ScrollView {
                 }
                 HorizontalLayout {
                     spacing: 6px;
+                    // start-aligned so chips size to their content instead of
+                    // each stretching to an equal share of the full width.
+                    alignment: start;
                     for p in root.presets: Toggle {
                         text: p.label;
+                        min-width: 76px;
                         checked: p.selected;
                         toggled => { root.set-refresh(p.ms); }
                     }
@@ -68,10 +72,10 @@ export component Settings inherits ScrollView {
                     text: "Run a tiny background process that records the last 60 s of CPU, memory, disk, network and GPU activity, so rproc shows recent history the moment you reopen it — even after a restart.";
                     color: Theme.text-dim; font-size: 11px; wrap: word-wrap;
                 }
-                CheckBox {
+                Check {
                     text: "Keep the last 60 seconds in the background";
                     checked: root.daemon-enabled;
-                    toggled => { root.daemon-toggled(self.checked); }
+                    toggled => { root.daemon-toggled(!root.daemon-enabled); }
                 }
                 Text { text: root.daemon-status; color: root.daemon-enabled ? Theme.accent : Theme.text-dim; font-weight: 700; }
             }
@@ -86,10 +90,10 @@ export component Settings inherits ScrollView {
                     text: "Record the heaviest processes behind each point on the CPU, memory, disk and GPU graphs. When on, hover any point to see the top processes. This makes the sampler scan the full process list every tick, so it's off by default.";
                     color: Theme.text-dim; font-size: 11px; wrap: word-wrap;
                 }
-                CheckBox {
+                Check {
                     text: "Show top processes on graph hover";
                     checked: root.attribution-enabled;
-                    toggled => { root.attribution-toggled(self.checked); }
+                    toggled => { root.attribution-toggled(!root.attribution-enabled); }
                 }
                 Text { text: root.attribution-status; color: root.attribution-enabled ? Theme.accent : Theme.text-dim; font-weight: 700; }
             }
@@ -104,10 +108,10 @@ export component Settings inherits ScrollView {
                     text: "Read GPU utilization, VRAM, temperature and power. On NVIDIA this loads the NVML/CUDA libraries (~20 MB resident). Turn it off to reclaim that memory if you don't need GPU stats — restart rproc for the full saving once it has been loaded.";
                     color: Theme.text-dim; font-size: 11px; wrap: word-wrap;
                 }
-                CheckBox {
+                Check {
                     text: "Monitor the GPU";
                     checked: root.gpu-enabled;
-                    toggled => { root.gpu-toggled(self.checked); }
+                    toggled => { root.gpu-toggled(!root.gpu-enabled); }
                 }
                 Text { text: root.gpu-status; color: root.gpu-enabled ? Theme.accent : Theme.text-dim; font-weight: 700; }
             }

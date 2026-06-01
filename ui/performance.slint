@@ -126,7 +126,9 @@ export component Performance inherits Rectangle {
                                 }
                                 hover-ta := TouchArea {
                                     mouse-cursor: crosshair;
-                                    moved => { root.hovered(self.mouse-x / graph-box.width); }
+                                    // Track the pointer on plain hover (no press). `moved` only
+                                    // fires while a button is held, so react to mouse-x instead.
+                                    changed mouse-x => { root.hovered(self.mouse-x / graph-box.width); }
                                     changed has-hover => { if (!self.has-hover) { root.hover-cleared(); } }
                                 }
                             }
