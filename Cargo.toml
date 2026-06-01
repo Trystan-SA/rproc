@@ -14,7 +14,9 @@ slint = { version = "=1.16.1", default-features = false, features = ["compat-1-2
 # Process icons are decoded and downscaled to display size here (not via Slint's
 # image loaders) so a 256x256 themed PNG/SVG costs ~1 KB resident, not ~256 KB.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
-resvg = "0.47"
+# Icons are shapes; drop resvg's default `text`/font features (they pull usvg's
+# fontdb + system fontconfig and a text-shaping stack we don't need).
+resvg = { version = "0.47", default-features = false }
 sysinfo = "0.33"
 nvml-wrapper = "0.11"
 anyhow = "1"

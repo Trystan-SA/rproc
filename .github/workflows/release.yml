@@ -22,7 +22,7 @@ jobs:
           apt-get install -y --no-install-recommends \
             curl ca-certificates build-essential pkg-config \
             libx11-dev libxkbcommon-dev libwayland-dev \
-            libgl1-mesa-dev libxcb1-dev \
+            libxcb1-dev libfontconfig1-dev \
             git
 
       - name: Checkout
