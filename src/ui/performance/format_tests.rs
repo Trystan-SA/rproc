@@ -71,5 +71,5 @@ fn temp_label_hides_unavailable_sentinel_and_nonfinite() {
     assert_eq!(temp_label(0.0), None);
     assert_eq!(temp_label(f32::NAN), None);
     assert_eq!(temp_label(f32::INFINITY), None);
-    assert_eq!(temp_label(47.0), Some("(47 °C)".to_string()));
+    assert_eq!(temp_label(47.0), Some("47C".to_string()));
 }

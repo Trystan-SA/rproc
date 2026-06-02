@@ -9,7 +9,19 @@ component StartupCard inherits Card {
     callback toggle(int, bool);
     callback properties(int);
     callback open-desktop(int);
+    callback context(int, length, length);
     height: self.preferred-height;
+    // Below the toggle/buttons so they keep their clicks; catches double-click
+    // and right-click on the rest of the card.
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        double-clicked => { root.properties(data.index); }
+        pointer-event(e) => {
+            if (e.button == PointerEventButton.right && e.kind == PointerEventKind.down) {
+                root.context(data.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+        }
+    }
     HorizontalLayout {
         padding: 10px;
         spacing: 8px;
@@ -18,11 +30,12 @@ component StartupCard inherits Card {
             spacing: 2px;
             HorizontalLayout {
                 spacing: 6px;
-                Text { text: data.name; font-weight: 700; font-size: 14px; color: Theme.text; }
-                Text { text: data.badge; color: Theme.text-dim; font-size: 11px; vertical-alignment: bottom; }
-                if data.locked: Text { text: "protected"; color: Theme.warn; font-size: 11px; font-weight: 700; vertical-alignment: bottom; }
+                Text { text: data.name; font-weight: 700; font-size: 14px; color: Theme.text; vertical-alignment: center; }
+                if data.locked: Text { text: "protected"; color: Theme.warn; font-size: 11px; font-weight: 700; vertical-alignment: center; }
+                Rectangle { horizontal-stretch: 1; }
             }
             if data.comment != "": Text { text: data.comment; color: Theme.text-dim; font-size: 11px; }
+            Text { text: data.badge; color: Theme.text-dim; font-size: 11px; }
             Text { text: data.exec; color: Theme.text-dim; font-size: 11px; font-family: "monospace"; overflow: elide; }
         }
         VerticalLayout {
@@ -60,6 +73,7 @@ export component Startup inherits VerticalLayout {
     callback toggle(int, bool);
     callback properties(int);
     callback open-desktop(int);
+    callback row-context(int, length, length);
 
     spacing: 6px;
 
@@ -88,6 +102,7 @@ export component Startup inherits VerticalLayout {
                 toggle(i, en) => { root.toggle(i, en); }
                 properties(i) => { root.properties(i); }
                 open-desktop(i) => { root.open-desktop(i); }
+                context(i, x, y) => { root.row-context(i, x, y); }
             }
             if root.critical.length > 0: Rectangle { height: 10px; }
             if root.critical.length > 0: Text { text: "Protected by systemd"; color: Theme.warn; font-weight: 700; }
@@ -101,6 +116,7 @@ export component Startup inherits VerticalLayout {
                 toggle(i, en) => { root.toggle(i, en); }
                 properties(i) => { root.properties(i); }
                 open-desktop(i) => { root.open-desktop(i); }
+                context(i, x, y) => { root.row-context(i, x, y); }
             }
             Rectangle { height: 6px; }
         }

@@ -268,6 +268,48 @@ export component Toggle inherits Rectangle {
     }
 }
 
+// Themed slider. The std-widgets Slider ignores our forced dark palette and
+// renders with the light Fluent track/handle, so we draw our own.
+export component ThemedSlider inherits Rectangle {
+    in property <float> minimum;
+    in property <float> maximum;
+    in-out property <float> value;
+    callback changed(float);
+    height: 20px;
+    min-width: 80px;
+    property <float> ratio: Math.max(0, Math.min(1, (root.value - root.minimum) / Math.max(root.maximum - root.minimum, 0.001)));
+    Rectangle {
+        y: (parent.height - self.height) / 2;
+        height: 4px;
+        border-radius: 2px;
+        background: Theme.panel-bg;
+        Rectangle {
+            x: 0;
+            width: parent.width * root.ratio;
+            height: 100%;
+            border-radius: 2px;
+            background: Theme.accent;
+        }
+    }
+    Rectangle {
+        width: 14px;
+        height: 14px;
+        border-radius: 7px;
+        x: root.ratio * (parent.width - self.width);
+        y: (parent.height - self.height) / 2;
+        background: ta.has-hover || ta.pressed ? Theme.accent : Theme.text;
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        moved => { root.set-from(self.mouse-x); }
+        clicked => { root.set-from(self.mouse-x); }
+    }
+    function set-from(px: length) {
+        root.value = root.minimum + Math.max(0, Math.min(1, px / root.width)) * (root.maximum - root.minimum);
+        root.changed(root.value);
+    }
+}
+
 // Single-line text input with a hint. Thin wrapper around the std LineEdit look,
 // kept local so the whole UI shares one style without importing the widget set.
 export component SearchBox inherits Rectangle {

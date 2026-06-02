@@ -51,7 +51,7 @@ pub(super) fn combined_disk(a: &VecDeque<f64>, b: &VecDeque<f64>) -> VecDeque<f6
 /// Format a hwmon temperature for display, or `None` when no sensor reading
 /// is available (`0.0` is the "unavailable" sentinel used across the monitor).
 pub(super) fn temp_label(temp_c: f32) -> Option<String> {
-    (temp_c.is_finite() && temp_c > 0.0).then(|| format!("({temp_c:.0} °C)"))
+    (temp_c.is_finite() && temp_c > 0.0).then(|| format!("{temp_c:.0}C"))
 }
 
 #[cfg(test)]

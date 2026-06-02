@@ -88,6 +88,10 @@ impl State {
         }
     }
 
+    pub fn row_ref(&self, index: usize) -> Option<RowRef> {
+        self.row_refs.get(index).cloned()
+    }
+
     pub fn row_clicked(&mut self, index: usize) {
         match self.row_refs.get(index).cloned() {
             Some(RowRef::Proc(pid)) => {

@@ -10,6 +10,8 @@ use crate::monitor::Sampler;
 use crate::monitor::startup::StartupSource;
 use crate::monitor::{Snapshot, processes as procmon};
 use crate::settings::Settings;
+use crate::ui::context_menu::{self, Act, ContextMenu, Target};
+use crate::ui::processes::RowRef;
 use crate::ui::processes::properties::{
     ProcessPropertiesView, build_properties_view as proc_props,
 };
@@ -19,7 +21,7 @@ use crate::ui::startup::properties::{
 };
 use crate::ui::widgets::{self, OpenTarget, format_bytes, format_duration};
 use crate::ui::{performance, processes, services, settings as settings_ui, startup};
-use crate::{MainWindow, PathField, StatLine};
+use crate::{MainWindow, MenuEntry, PathField, StatLine};
 
 /// Which entity the Properties modal is showing. Each holds the cached heavy
 /// lookup so the modal doesn't re-walk `/proc` or re-spawn `systemctl` per tick.
@@ -38,6 +40,7 @@ struct UiState {
     services: services::State,
     startup: startup::State,
     prop: Option<PropEntity>,
+    ctx: ContextMenu,
 }
 
 pub fn run(settings: Settings) -> anyhow::Result<()> {
@@ -57,6 +60,7 @@ pub fn run(settings: Settings) -> anyhow::Result<()> {
         services: services::State::default(),
         startup: startup::State::default(),
         prop: None,
+        ctx: ContextMenu::default(),
     }));
 
     // Optional: open straight onto a given tab (handy for measuring RAM of a
@@ -314,6 +318,35 @@ fn install_callbacks(window: &MainWindow, state: &Rc<RefCell<UiState>>) {
         }
     }));
 
+    // --- Right-click context menu ---
+    window.on_proc_row_context(handler!(|w, s, i: i32, x: f32, y: f32| {
+        s.proc.row_clicked(i as usize);
+        if let Some((target, built)) = proc_menu(&s, i as usize) {
+            arm_ctx(&w, &mut s, target, built, x, y);
+        }
+    }));
+    window.on_svc_row_context(handler!(|w, s, i: i32, x: f32, y: f32| {
+        if let Some((target, built)) = svc_menu(&s, i as usize) {
+            arm_ctx(&w, &mut s, target, built, x, y);
+        }
+    }));
+    window.on_start_row_context(handler!(|w, s, i: i32, x: f32, y: f32| {
+        if let Some((target, built)) = start_menu(&s, i as usize) {
+            arm_ctx(&w, &mut s, target, built, x, y);
+        }
+    }));
+    window.on_ctx_activate(handler!(|w, s, action: i32| {
+        if let Some((target, act)) = s.ctx.resolve(action as usize) {
+            context_dispatch(&mut s, target, act);
+        }
+        s.ctx.close();
+        w.set_ctx_open(false);
+    }));
+    window.on_ctx_dismiss(handler!(|w, s| {
+        s.ctx.close();
+        w.set_ctx_open(false);
+    }));
+
     // --- Settings ---
     window.on_cfg_set_refresh(handler!(|w, s, ms: i32| {
         s.settings.set_refresh_ms(ms as u64);
@@ -356,6 +389,271 @@ fn install_callbacks(window: &MainWindow, state: &Rc<RefCell<UiState>>) {
 fn open_process_props(st: &mut UiState, pid: u32) {
     if let Some(p) = st.snapshot.processes.iter().find(|p| p.pid == pid) {
         st.prop = Some(PropEntity::Process(proc_props(p)));
+    }
+}
+
+type Menu = (ModelRc<MenuEntry>, Vec<Act>);
+
+fn arm_ctx(w: &MainWindow, st: &mut UiState, target: Target, menu: Menu, x: f32, y: f32) {
+    let (items, acts) = menu;
+    st.ctx.arm(target, acts);
+    w.set_ctx_items(items);
+    w.set_ctx_x(x);
+    w.set_ctx_y(y);
+    w.set_ctx_open(true);
+}
+
+fn proc_menu(st: &UiState, i: usize) -> Option<(Target, Menu)> {
+    match st.proc.row_ref(i)? {
+        RowRef::Proc(pid) => {
+            let p = st.snapshot.processes.iter().find(|p| p.pid == pid)?;
+            let stopped = matches!(p.status.as_str(), "Stop" | "Stopped");
+            let has_exe = !p.exe.is_empty() && std::path::Path::new(&p.exe).exists();
+            let has_cmd = !p.cmd.is_empty();
+            let mut b = context_menu::Builder::new();
+            b.item("End task", Act::EndTask, true);
+            b.item("Force kill", Act::ForceKill, true);
+            b.item(
+                if stopped { "Resume" } else { "Suspend" },
+                Act::SuspendResume,
+                true,
+            );
+            b.sep();
+            b.item("Open file location", Act::OpenLocation, has_exe);
+            b.item("Search online", Act::SearchOnline, true);
+            b.sep();
+            b.item("Copy PID", Act::CopyPid, true);
+            b.item("Copy name", Act::CopyName, true);
+            b.item("Copy command line", Act::CopyCmd, has_cmd);
+            b.sep();
+            b.item("Properties", Act::Properties, true);
+            Some((Target::Process(pid), b.finish()))
+        }
+        RowRef::Group(name) => {
+            let group: Vec<&_> = st
+                .snapshot
+                .processes
+                .iter()
+                .filter(|p| p.name == name)
+                .collect();
+            let n = group.len();
+            let all_stopped = !group.is_empty()
+                && group
+                    .iter()
+                    .all(|p| matches!(p.status.as_str(), "Stop" | "Stopped"));
+            let main_exe = group
+                .iter()
+                .min_by_key(|p| p.pid)
+                .map(|p| p.exe.clone())
+                .unwrap_or_default();
+            let has_exe = !main_exe.is_empty() && std::path::Path::new(&main_exe).exists();
+            let mut b = context_menu::Builder::new();
+            b.item(format!("End all ({n})"), Act::EndAll, true);
+            b.item(format!("Force kill all ({n})"), Act::ForceKillAll, true);
+            let suspend = if all_stopped {
+                format!("Resume all ({n})")
+            } else {
+                format!("Suspend all ({n})")
+            };
+            b.item(suspend, Act::SuspendResumeAll, true);
+            b.sep();
+            b.item("Open file location", Act::OpenLocation, has_exe);
+            b.item("Search online", Act::SearchOnline, true);
+            b.sep();
+            b.item("Copy name", Act::CopyName, true);
+            b.item("Copy all PIDs", Act::CopyAllPids, true);
+            b.sep();
+            b.item("Properties", Act::Properties, true);
+            Some((Target::Group(name), b.finish()))
+        }
+        RowRef::Section => None,
+    }
+}
+
+fn svc_menu(st: &UiState, i: usize) -> Option<(Target, Menu)> {
+    st.services.entries.get(i)?;
+    let mut b = context_menu::Builder::new();
+    b.item("Start", Act::SvcStart, true);
+    b.item("Stop", Act::SvcStop, true);
+    b.item("Restart", Act::SvcRestart, true);
+    b.sep();
+    b.item("Copy unit name", Act::CopyUnit, true);
+    b.sep();
+    b.item("Properties", Act::Properties, true);
+    Some((Target::Service(i), b.finish()))
+}
+
+fn start_menu(st: &UiState, i: usize) -> Option<(Target, Menu)> {
+    let e = st.startup.entries.get(i)?;
+    let is_desktop = matches!(
+        e.source,
+        StartupSource::UserAutostart | StartupSource::SystemAutostart
+    );
+    let mut b = context_menu::Builder::new();
+    b.item("Copy name", Act::CopyName, true);
+    if is_desktop {
+        b.item("Open .desktop file", Act::OpenDesktop, true);
+    }
+    b.sep();
+    b.item("Properties", Act::Properties, true);
+    Some((Target::Startup(i), b.finish()))
+}
+
+fn context_dispatch(st: &mut UiState, target: Target, act: Act) {
+    match target {
+        Target::Process(pid) => match act {
+            Act::EndTask => {
+                let _ = procmon::terminate(pid);
+            }
+            Act::ForceKill => {
+                let _ = procmon::force_kill(pid);
+            }
+            Act::SuspendResume => {
+                let stopped = st
+                    .snapshot
+                    .processes
+                    .iter()
+                    .find(|p| p.pid == pid)
+                    .map(|p| matches!(p.status.as_str(), "Stop" | "Stopped"))
+                    .unwrap_or(false);
+                if stopped {
+                    let _ = procmon::resume(pid);
+                } else {
+                    let _ = procmon::suspend(pid);
+                }
+            }
+            Act::OpenLocation => {
+                if let Some(p) = st.snapshot.processes.iter().find(|p| p.pid == pid) {
+                    processes::open_in_file_manager(&p.exe);
+                }
+            }
+            Act::SearchOnline => {
+                if let Some(p) = st.snapshot.processes.iter().find(|p| p.pid == pid) {
+                    processes::open_search(&p.name);
+                }
+            }
+            Act::CopyPid => processes::copy_to_clipboard(&pid.to_string()),
+            Act::CopyName => {
+                if let Some(p) = st.snapshot.processes.iter().find(|p| p.pid == pid) {
+                    processes::copy_to_clipboard(&p.name);
+                }
+            }
+            Act::CopyCmd => {
+                if let Some(p) = st.snapshot.processes.iter().find(|p| p.pid == pid) {
+                    processes::copy_to_clipboard(&p.cmd);
+                }
+            }
+            Act::Properties => open_process_props(st, pid),
+            _ => {}
+        },
+        Target::Group(name) => dispatch_group(st, &name, act),
+        Target::Service(i) => match act {
+            Act::SvcStart => st.services.action(i, "start"),
+            Act::SvcStop => st.services.action(i, "stop"),
+            Act::SvcRestart => st.services.action(i, "restart"),
+            Act::CopyUnit => {
+                if let Some(svc) = st.services.entries.get(i) {
+                    processes::copy_to_clipboard(&svc.name.clone());
+                }
+            }
+            Act::Properties => {
+                if let Some(svc) = st.services.entries.get(i) {
+                    let view = ServicePropertiesView::fetch(svc.name.clone(), svc.scope.clone());
+                    st.prop = Some(PropEntity::Service(view));
+                }
+            }
+            _ => {}
+        },
+        Target::Startup(i) => match act {
+            Act::CopyName => {
+                if let Some(e) = st.startup.entries.get(i) {
+                    let copy = if e.name.is_empty() {
+                        e.path
+                            .file_name()
+                            .map(|s| s.to_string_lossy().into_owned())
+                            .unwrap_or_default()
+                    } else {
+                        e.name.clone()
+                    };
+                    processes::copy_to_clipboard(&copy);
+                }
+            }
+            Act::OpenDesktop => {
+                if let Some(e) = st.startup.entries.get(i) {
+                    widgets::open_path(&e.path.to_string_lossy(), OpenTarget::Parent);
+                }
+            }
+            Act::Properties => {
+                let view = startup_props(&st.startup.entries, i);
+                st.prop = Some(PropEntity::Startup(view));
+            }
+            _ => {}
+        },
+    }
+}
+
+fn dispatch_group(st: &mut UiState, name: &str, act: Act) {
+    let pids: Vec<u32> = st
+        .snapshot
+        .processes
+        .iter()
+        .filter(|p| p.name == name)
+        .map(|p| p.pid)
+        .collect();
+    match act {
+        Act::EndAll => {
+            for pid in &pids {
+                let _ = procmon::terminate(*pid);
+            }
+        }
+        Act::ForceKillAll => {
+            for pid in &pids {
+                let _ = procmon::force_kill(*pid);
+            }
+        }
+        Act::SuspendResumeAll => {
+            let all_stopped = !pids.is_empty()
+                && st
+                    .snapshot
+                    .processes
+                    .iter()
+                    .filter(|p| p.name == name)
+                    .all(|p| matches!(p.status.as_str(), "Stop" | "Stopped"));
+            for pid in &pids {
+                if all_stopped {
+                    let _ = procmon::resume(*pid);
+                } else {
+                    let _ = procmon::suspend(*pid);
+                }
+            }
+        }
+        Act::OpenLocation => {
+            if let Some(p) = st
+                .snapshot
+                .processes
+                .iter()
+                .filter(|p| p.name == name)
+                .min_by_key(|p| p.pid)
+            {
+                processes::open_in_file_manager(&p.exe);
+            }
+        }
+        Act::SearchOnline => processes::open_search(name),
+        Act::CopyName => processes::copy_to_clipboard(name),
+        Act::CopyAllPids => {
+            let joined = pids
+                .iter()
+                .map(|p| p.to_string())
+                .collect::<Vec<_>>()
+                .join(" ");
+            processes::copy_to_clipboard(&joined);
+        }
+        Act::Properties => {
+            if let Some(pid) = pids.iter().copied().min() {
+                open_process_props(st, pid);
+            }
+        }
+        _ => {}
     }
 }
 

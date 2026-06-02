@@ -105,3 +105,12 @@ export struct AttribRow {
     pid: int,
     value: string,
 }
+
+// One row in the right-click context menu. `action` is the index the Rust glue
+// uses to dispatch; a `separator` row draws a divider and ignores the rest.
+export struct MenuEntry {
+    label: string,
+    action: int,
+    enabled: bool,
+    separator: bool,
+}

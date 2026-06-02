@@ -1,7 +1,7 @@
 import { Theme } from "theme.slint";
-import { Card, Toggle, StatRow, Check } from "widgets.slint";
+import { Card, Toggle, StatRow, Check, ThemedSlider } from "widgets.slint";
 import { RefreshPreset } from "structs.slint";
-import { ScrollView, Slider } from "std-widgets.slint";
+import { ScrollView } from "std-widgets.slint";
 
 export component Settings inherits ScrollView {
     in property <[RefreshPreset]> presets;
@@ -51,7 +51,7 @@ export component Settings inherits ScrollView {
                 HorizontalLayout {
                     spacing: 8px;
                     Text { text: "Custom"; color: Theme.text-dim; font-size: 11px; vertical-alignment: center; }
-                    Slider {
+                    ThemedSlider {
                         horizontal-stretch: 1;
                         minimum: 100;
                         maximum: 30000;

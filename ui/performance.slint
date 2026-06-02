@@ -12,10 +12,11 @@ component PerfCard inherits Card {
         padding: 10px;
         spacing: 2px;
         HorizontalLayout {
+            spacing: 6px;
             Text { text: data.title; color: Theme.text; font-weight: 700; }
             Rectangle { horizontal-stretch: 1; }
+            if data.temp != "": Text { text: data.temp; color: Theme.text-dim; font-size: 11px; vertical-alignment: center; }
             Text { text: data.value; color: data.color; font-weight: 700; font-size: 15px; }
-            if data.temp != "": Text { text: " " + data.temp; color: Theme.text-dim; font-size: 11px; vertical-alignment: bottom; }
         }
         Text { text: data.subtitle; color: Theme.text-dim; font-size: 11px; overflow: elide; }
         Sparkline {
@@ -147,6 +148,10 @@ export component Performance inherits Rectangle {
                             }
 
                             if root.attrib-active: Panel {
+                                // Fixed height (header + up to TOP_N=5 rows) so moving
+                                // the cursor doesn't shift everything below it.
+                                height: 138px;
+                                clip: true;
                                 VerticalLayout {
                                     padding: 10px; spacing: 4px;
                                     if !root.hover-active: Text {
@@ -169,6 +174,7 @@ export component Performance inherits Rectangle {
                                             Text { text: a.value; color: Theme.accent; font-weight: 700; }
                                         }
                                     }
+                                    Rectangle { vertical-stretch: 1; }
                                 }
                             }
 

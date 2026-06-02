@@ -1,6 +1,6 @@
 import { Theme } from "theme.slint";
 import { Card, Panel, StatRow, SmallButton } from "widgets.slint";
-import { CardData, GraphSeries, CoreCell, StatLine, PathField, ProcRow, ServiceRow, StartupRow, RefreshPreset, AttribRow } from "structs.slint";
+import { CardData, GraphSeries, CoreCell, StatLine, PathField, ProcRow, ServiceRow, StartupRow, RefreshPreset, AttribRow, MenuEntry } from "structs.slint";
 import { Sidebar } from "sidebar.slint";
 import { Performance } from "performance.slint";
 import { Processes } from "processes.slint";
@@ -130,6 +130,17 @@ export component MainWindow inherits Window {
     callback prop-reload();
     callback open-path(string, bool);
 
+    // --- Right-click context menu (generic across tabs) ---
+    in property <bool> ctx-open;
+    in property <length> ctx-x;
+    in property <length> ctx-y;
+    in property <[MenuEntry]> ctx-items;
+    callback proc-row-context(int, length, length);
+    callback svc-row-context(int, length, length);
+    callback start-row-context(int, length, length);
+    callback ctx-activate(int);
+    callback ctx-dismiss();
+
     // Manual placement (not a HorizontalLayout) so the sidebar width depending
     // on `compact` (derived from window width) can't form a layout-info cycle.
     sidebar := Sidebar {
@@ -169,6 +180,7 @@ export component MainWindow inherits Window {
                     filter-changed(t) => { root.proc-filter-changed(t); }
                     sort(k) => { root.proc-sort(k); }
                     row-clicked(i) => { root.proc-row-clicked(i); }
+                    row-context(i, x, y) => { root.proc-row-context(i, x, y); }
                     toggle-group(g) => { root.proc-toggle-group(g); }
                     end-task => { root.proc-end-task(); }
                     force-kill => { root.proc-force-kill(); }
@@ -214,6 +226,7 @@ export component MainWindow inherits Window {
                     toggle(i, e) => { root.start-toggle(i, e); }
                     properties(i) => { root.start-properties(i); }
                     open-desktop(i) => { root.start-open-desktop(i); }
+                    row-context(i, x, y) => { root.start-row-context(i, x, y); }
                 }
 
                 if root.tab == 3: Services {
@@ -228,6 +241,7 @@ export component MainWindow inherits Window {
                     filter-changed(t) => { root.svc-filter-changed(t); }
                     action(i, a) => { root.svc-action(i, a); }
                     properties(i) => { root.svc-properties(i); }
+                    row-context(i, x, y) => { root.svc-row-context(i, x, y); }
                 }
 
                 if root.tab == 4: Settings {
@@ -271,22 +285,72 @@ export component MainWindow inherits Window {
                 ScrollView {
                     vertical-stretch: 1;
                     VerticalLayout {
-                        spacing: 4px;
+                        // Pack at the top at natural sizes; without this the default
+                        // `stretch` balloons the flexible rows to fill the tall card.
+                        alignment: start;
+                        spacing: 1px;
                         for s in root.prop-stats: Rectangle {
-                            height: s.separator ? 9px : 22px;
+                            height: s.separator ? 9px : 20px;
                             if s.separator: Rectangle { y: 4px; height: 1px; width: 100%; background: Theme.text-dim.with-alpha(0.18); }
                             if !s.separator: StatRow { label: s.label; value: s.value; width: 100%; }
                         }
+                        // Tight label line, then the path + a compact Open button.
                         for p in root.prop-paths: VerticalLayout {
-                            spacing: 2px;
+                            spacing: 0px;
+                            Text { text: p.label; color: Theme.text-dim; font-size: 12px; }
                             HorizontalLayout {
-                                Text { text: p.label; color: Theme.text-dim; horizontal-stretch: 1; vertical-alignment: center; }
-                                SmallButton { text: "Open"; clicked => { root.open-path(p.path, p.open-parent); } }
+                                spacing: 6px;
+                                Text { text: p.path; color: Theme.text; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; wrap: word-wrap; }
+                                SmallButton { text: "Open"; height: 20px; clicked => { root.open-path(p.path, p.open-parent); } }
                             }
-                            Text { text: p.path; color: Theme.text; wrap: word-wrap; }
                         }
-                        if root.prop-free-label != "": Text { text: root.prop-free-label; color: Theme.text-dim; }
-                        if root.prop-free-text != "": Text { text: root.prop-free-text; color: Theme.text; wrap: word-wrap; }
+                        if root.prop-free-label != "": Text { text: root.prop-free-label; color: Theme.text-dim; font-size: 12px; }
+                        if root.prop-free-text != "": Text { text: root.prop-free-text; color: Theme.text; font-size: 12px; wrap: word-wrap; }
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Right-click context menu overlay ---
+    if root.ctx-open: Rectangle {
+        // Full-window catcher: any press outside the menu dismisses it.
+        TouchArea {
+            pointer-event(e) => {
+                if (e.kind == PointerEventKind.down) { root.ctx-dismiss(); }
+            }
+        }
+        Rectangle {
+            width: 220px;
+            height: popup-col.preferred-height;
+            x: Math.min(root.ctx-x, root.width - self.width - 6px);
+            y: Math.min(root.ctx-y, root.height - self.height - 6px);
+            background: Theme.card-bg;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.divider;
+            // Swallow clicks inside so the catcher above doesn't dismiss first.
+            TouchArea {}
+            popup-col := VerticalLayout {
+                padding: 4px;
+                for it in root.ctx-items: Rectangle {
+                    height: it.separator ? 9px : 26px;
+                    border-radius: 4px;
+                    background: !it.separator && it.enabled && mi-ta.has-hover ? Theme.hover-bg : transparent;
+                    if it.separator: Rectangle { y: 4px; height: 1px; width: 100%; background: Theme.divider; }
+                    if !it.separator: Text {
+                        x: 10px;
+                        width: parent.width - 20px;
+                        text: it.label;
+                        color: it.enabled ? Theme.text : Theme.text-dim;
+                        vertical-alignment: center;
+                        height: 100%;
+                        overflow: elide;
+                    }
+                    mi-ta := TouchArea {
+                        enabled: !it.separator && it.enabled;
+                        mouse-cursor: pointer;
+                        clicked => { root.ctx-activate(it.action); root.ctx-dismiss(); }
                     }
                 }
             }

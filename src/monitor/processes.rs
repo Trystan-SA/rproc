@@ -60,10 +60,13 @@ pub fn collect(sys: &System, users: &Users) -> Vec<ProcInfo> {
             .map(|u| u.name().to_string())
             .unwrap_or_default();
         let usage = p.disk_usage();
+        // /proc/<pid>/cmdline is NUL-separated and often carries empty trailing
+        // fields; dropping them avoids stray double/trailing spaces in the join.
         let cmd_vec: Vec<String> = p
             .cmd()
             .iter()
-            .map(|s| s.to_string_lossy().into_owned())
+            .map(|s| s.to_string_lossy().trim().to_string())
+            .filter(|s| !s.is_empty())
             .collect();
         let cpu_pct = p.cpu_usage() / cores;
         let raw_status = format!("{:?}", p.status());

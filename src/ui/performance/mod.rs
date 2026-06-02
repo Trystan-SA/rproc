@@ -421,7 +421,7 @@ fn apply_detail(window: &MainWindow, state: &State, snap: &Snapshot, attribution
                     ));
                 }
                 if g.temp_c > 0.0 {
-                    stats.push(stat("Temperature", &format!("{:.0} °C", g.temp_c)));
+                    stats.push(stat("Temperature", &format!("{:.0}C", g.temp_c)));
                 }
                 if g.power_w > 0.0 {
                     stats.push(stat("Power", &format!("{:.1} W", g.power_w)));

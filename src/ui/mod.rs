@@ -1,4 +1,5 @@
 pub mod attribution;
+pub mod context_menu;
 pub mod graph;
 pub mod icons;
 pub mod model;
