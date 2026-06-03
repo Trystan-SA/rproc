@@ -16,9 +16,9 @@ use std::fs;
 use std::path::Path;
 use std::time::Instant;
 
-use super::{GpuInfo, pci_model, read_file_f32, read_file_u64};
+use super::{GpuInfo, read_file_f32, read_file_u64};
 
-pub(super) fn read(device: &Path, fdinfo: Option<&mut IntelFdinfo>) -> GpuInfo {
+pub(super) fn read(device: &Path, fdinfo: Option<&mut IntelFdinfo>, name: &str) -> GpuInfo {
     let cur_freq = read_file_u64(&device.join("gt_act_freq_mhz"))
         .or_else(|| read_file_u64(&device.join("gt/gt0/rps_act_freq_mhz")))
         .unwrap_or(0) as u32;
@@ -40,7 +40,7 @@ pub(super) fn read(device: &Path, fdinfo: Option<&mut IntelFdinfo>) -> GpuInfo {
     };
     GpuInfo {
         vendor: "Intel".into(),
-        name: pci_model(device).unwrap_or_else(|| "Intel GPU".into()),
+        name: name.to_string(),
         util_pct,
         mem_used: 0,
         mem_total: 0,

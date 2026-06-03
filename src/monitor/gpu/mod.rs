@@ -25,8 +25,8 @@ pub struct GpuInfo {
 
 pub struct GpuCollector {
     nvml: Option<Nvml>,
-    amd_cards: Vec<PathBuf>,
-    intel_cards: Vec<PathBuf>,
+    amd_cards: Vec<(PathBuf, String)>,
+    intel_cards: Vec<(PathBuf, String)>,
     intel_fdinfo: Vec<Option<IntelFdinfo>>,
 }
 
@@ -38,10 +38,27 @@ impl GpuCollector {
         // matches its own card by PCI slot, so multiple Intel GPUs disambiguate.
         let intel_fdinfo: Vec<Option<IntelFdinfo>> =
             intel.iter().map(|d| IntelFdinfo::new(d)).collect();
+        // The GPU name is static, but resolving it via `pci_model` can spawn
+        // `glxinfo` (a full GL context). Resolve once here so per-tick sampling
+        // never forks a subprocess — re-spawning it every tick stalled the UI.
+        let amd_cards = amd
+            .into_iter()
+            .map(|d| {
+                let name = pci_model(&d).unwrap_or_else(|| "AMD GPU".into());
+                (d, name)
+            })
+            .collect();
+        let intel_cards = intel
+            .into_iter()
+            .map(|d| {
+                let name = pci_model(&d).unwrap_or_else(|| "Intel GPU".into());
+                (d, name)
+            })
+            .collect();
         Self {
             nvml,
-            amd_cards: amd,
-            intel_cards: intel,
+            amd_cards,
+            intel_cards,
             intel_fdinfo,
         }
     }
@@ -64,11 +81,11 @@ impl GpuCollector {
                 }
             }
         }
-        for p in &self.amd_cards {
-            out.push(amd::read(p));
+        for (p, name) in &self.amd_cards {
+            out.push(amd::read(p, name));
         }
-        for (p, fdinfo) in self.intel_cards.iter().zip(self.intel_fdinfo.iter_mut()) {
-            out.push(intel::read(p, fdinfo.as_mut()));
+        for ((p, name), fdinfo) in self.intel_cards.iter().zip(self.intel_fdinfo.iter_mut()) {
+            out.push(intel::read(p, fdinfo.as_mut(), name));
         }
         out
     }
