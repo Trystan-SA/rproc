@@ -1,0 +1,218 @@
+import { Theme } from "theme.slint";
+import { Panel, SmallButton, SearchBox } from "widgets.slint";
+import { ProcRow } from "structs.slint";
+import { ListView } from "std-widgets.slint";
+
+// dir: 0 down, 1 up, 2 right.
+component Caret inherits Rectangle {
+    in property <int> dir;
+    in property <color> tint;
+    width: 9px;
+    height: 9px;
+    Path {
+        fill: root.tint;
+        viewbox-width: 9;
+        viewbox-height: 9;
+        width: 100%;
+        height: 100%;
+        MoveTo { x: root.dir == 1 ? 0 : (root.dir == 2 ? 2 : 0); y: root.dir == 1 ? 7 : (root.dir == 2 ? 0 : 2); }
+        LineTo { x: root.dir == 1 ? 9 : (root.dir == 2 ? 8 : 9); y: root.dir == 1 ? 7 : (root.dir == 2 ? 4.5 : 2); }
+        LineTo { x: root.dir == 1 ? 4.5 : (root.dir == 2 ? 2 : 4.5); y: root.dir == 1 ? 1 : (root.dir == 2 ? 9 : 8); }
+    }
+}
+
+component HeaderCell inherits Rectangle {
+    in property <string> text;
+    in property <int> key;
+    in property <int> active-key;
+    in property <bool> desc;
+    callback sort(int);
+    HorizontalLayout {
+        spacing: 4px;
+        padding-left: 4px;
+        Text {
+            text: root.text;
+            font-weight: 700;
+            vertical-alignment: center;
+            color: root.key == root.active-key ? Theme.text : Theme.text-dim;
+        }
+        Caret {
+            y: (parent.height - self.height) / 2;
+            dir: (root.key == root.active-key && !root.desc) ? 1 : 0;
+            tint: root.key == root.active-key ? Theme.text : Theme.text-faint;
+        }
+        // Extensible spacer so the caret hugs the name instead of the next column.
+        Rectangle { horizontal-stretch: 1; }
+    }
+    TouchArea { mouse-cursor: pointer; clicked => { root.sort(root.key); } }
+    // Column separator on the right edge.
+    Rectangle {
+        x: parent.width - self.width;
+        width: 1px;
+        background: Theme.divider;
+    }
+}
+
+export component Processes inherits VerticalLayout {
+    in property <[ProcRow]> rows;
+    in property <string> count-label;
+    in property <bool> sampling;
+    in-out property <string> filter;
+    in property <int> sort-key;
+    in property <bool> sort-desc;
+    in property <int> selected-pid;
+    in property <string> selected-group;
+    in property <int> selected-count;
+    in property <string> suspend-label;
+    in property <string> cpu-header;
+    in property <string> mem-header;
+
+    callback filter-changed(string);
+    callback sort(int);
+    callback row-clicked(int);
+    callback row-context(int, length, length);
+    callback toggle-group(string);
+    callback end-task();
+    callback force-kill();
+    callback suspend-resume();
+    callback properties();
+    callback open-location();
+    callback search();
+    callback copy-pid();
+    callback end-all();
+    callback force-kill-all();
+    callback group-properties();
+
+    spacing: 8px;
+
+    // Title + actions.
+    HorizontalLayout {
+        spacing: 8px;
+        Text { text: "Processes"; font-size: 20px; font-weight: 700; color: Theme.text; vertical-alignment: center; }
+        Rectangle { horizontal-stretch: 1; }
+        if root.selected-pid != -1: HorizontalLayout {
+            spacing: 6px;
+            SmallButton { text: "End task"; clicked => { root.end-task(); } }
+            SmallButton { text: "Force kill"; clicked => { root.force-kill(); } }
+            SmallButton { text: root.suspend-label; clicked => { root.suspend-resume(); } }
+            SmallButton { text: "Properties"; clicked => { root.properties(); } }
+            SmallButton { text: "Open location"; clicked => { root.open-location(); } }
+            SmallButton { text: "Search ↗"; clicked => { root.search(); } }
+            SmallButton { text: "Copy PID"; clicked => { root.copy-pid(); } }
+        }
+        if root.selected-pid == -1 && root.selected-group != "": HorizontalLayout {
+            spacing: 6px;
+            SmallButton { text: "End all (" + root.selected-count + ")"; clicked => { root.end-all(); } }
+            SmallButton { text: "Force kill all (" + root.selected-count + ")"; clicked => { root.force-kill-all(); } }
+            SmallButton { text: "Properties"; clicked => { root.group-properties(); } }
+        }
+        if root.selected-pid == -1 && root.selected-group == "": SmallButton { text: "End task"; enabled: false; }
+        SearchBox {
+            placeholder: "Filter by name or PID";
+            text <=> root.filter;
+            edited(t) => { root.filter-changed(t); }
+        }
+    }
+
+    Panel {
+        vertical-stretch: 1;
+        VerticalLayout {
+            padding: 8px;
+            spacing: 0px;
+            // Column header.
+            Rectangle {
+                height: 26px;
+                HorizontalLayout {
+                    HeaderCell { horizontal-stretch: 1; text: "Name"; key: 0; active-key: root.sort-key; desc: root.sort-desc; sort(k) => { root.sort(k); } }
+                    HeaderCell { width: 60px; text: "PID"; key: 1; active-key: root.sort-key; desc: root.sort-desc; sort(k) => { root.sort(k); } }
+                    HeaderCell { width: 110px; text: "User"; key: 2; active-key: root.sort-key; desc: root.sort-desc; sort(k) => { root.sort(k); } }
+                    HeaderCell { width: 80px; text: root.cpu-header; key: 3; active-key: root.sort-key; desc: root.sort-desc; sort(k) => { root.sort(k); } }
+                    HeaderCell { width: 100px; text: root.mem-header; key: 4; active-key: root.sort-key; desc: root.sort-desc; sort(k) => { root.sort(k); } }
+                    HeaderCell { width: 120px; text: "Disk (R+W)"; key: 5; active-key: root.sort-key; desc: root.sort-desc; sort(k) => { root.sort(k); } }
+                    HeaderCell { width: 90px; text: "Status"; key: 6; active-key: root.sort-key; desc: root.sort-desc; sort(k) => { root.sort(k); } }
+                }
+            }
+            ListView {
+                vertical-stretch: 1;
+                for row[i] in root.rows: Rectangle {
+                    height: row.kind == 0 ? 30px : 22px;
+                    background: row.selected ? Theme.selection-bg : (ta.has-hover && row.kind != 0 ? #ffffff0A : transparent);
+
+                    // Declared first so it sits *below* the caret's TouchArea —
+                    // clicks on the caret toggle the group, the rest select.
+                    ta := TouchArea {
+                        enabled: row.kind != 0;
+                        mouse-cursor: row.kind != 0 ? pointer : default;
+                        clicked => { root.row-clicked(i); }
+                        double-clicked => {
+                            root.row-clicked(i);
+                            if (row.kind == 1) { root.group-properties(); } else { root.properties(); }
+                        }
+                        pointer-event(e) => {
+                            if (e.button == PointerEventButton.right && e.kind == PointerEventKind.down) {
+                                root.row-context(i, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                            }
+                        }
+                    }
+
+                    // Section header.
+                    if row.kind == 0: Text {
+                        x: 8px;
+                        text: row.label;
+                        color: Theme.accent;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                        height: 100%;
+                    }
+
+                    // Data / group rows.
+                    if row.kind != 0: HorizontalLayout {
+                        // Name column.
+                        HorizontalLayout {
+                            horizontal-stretch: 1;
+                            spacing: 4px;
+                            padding-left: row.indent ? 20px : 0px;
+                            // Caret for groups.
+                            if row.kind == 1: Rectangle {
+                                width: 12px;
+                                Caret {
+                                    y: (parent.height - self.height) / 2;
+                                    dir: row.expanded ? 0 : 2;
+                                    tint: Theme.text;
+                                }
+                                TouchArea { mouse-cursor: pointer; clicked => { root.toggle-group(row.group-key); } }
+                            }
+                            Image {
+                                width: 16px; height: 16px;
+                                y: (parent.height - self.height) / 2;
+                                source: row.icon;
+                                image-fit: contain;
+                            }
+                            Text {
+                                text: row.kind == 1 ? row.label + "  (" + row.count + ")" : row.label;
+                                color: Theme.text;
+                                font-weight: row.kind == 1 ? 700 : 400;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                horizontal-stretch: 1;
+                            }
+                        }
+                        Text { width: 60px; text: row.kind == 1 ? "" : row.pid-text; color: Theme.text; vertical-alignment: center; }
+                        Text { width: 110px; text: row.kind == 1 ? "" : row.user; color: Theme.text; vertical-alignment: center; overflow: elide; }
+                        Text { width: 80px; text: row.cpu; color: Theme.text; font-weight: row.kind == 1 ? 700 : 400; vertical-alignment: center; }
+                        Text { width: 100px; text: row.mem; color: Theme.text; font-weight: row.kind == 1 ? 700 : 400; vertical-alignment: center; }
+                        Text { width: 120px; text: row.disk; color: Theme.text; font-weight: row.kind == 1 ? 700 : 400; vertical-alignment: center; }
+                        Text { width: 90px; text: row.status; color: row.status-color; vertical-alignment: center; }
+                    }
+                }
+            }
+        }
+    }
+
+    // Footer.
+    HorizontalLayout {
+        spacing: 6px;
+        Text { text: root.count-label; color: Theme.text-dim; font-size: 11px; }
+        if root.sampling == false: Text { text: " · sampling…"; color: Theme.text-dim; font-size: 11px; }
+    }
+}

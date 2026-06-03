@@ -1,0 +1,138 @@
+import { Theme } from "theme.slint";
+
+// 16x16 glyphs redrawn from the egui painter icons (list / bars / boxed-arrow /
+// power / gear). kind: 0 Processes, 1 Performance, 2 Startup, 3 Services, 4 Settings.
+component SideIcon inherits Rectangle {
+    in property <int> kind;
+    in property <color> icon-color;
+    width: 16px;
+    height: 16px;
+
+    // Processes — three dotted rows.
+    if root.kind == 0: Rectangle {
+        for row in [3, 8, 13]: Rectangle {
+            x: 1px;
+            y: row * 1px - 1px;
+            width: 2px;
+            height: 2px;
+            border-radius: 1px;
+            background: root.icon-color;
+        }
+        for row in [3, 8, 13]: Rectangle {
+            x: 5px;
+            y: row * 1px - 0.7px;
+            width: 10px;
+            height: 1.4px;
+            background: root.icon-color;
+        }
+    }
+
+    // Performance — three bars of varying height.
+    if root.kind == 1: Rectangle {
+        Rectangle { x: 1.5px; y: 8.8px; width: 3px; height: 7.2px; background: root.icon-color; }
+        Rectangle { x: 6.5px; y: 2.4px; width: 3px; height: 13.6px; background: root.icon-color; }
+        Rectangle { x: 11.5px; y: 5.6px; width: 3px; height: 10.4px; background: root.icon-color; }
+    }
+
+    // Startup — up arrow inside a rounded square.
+    if root.kind == 2: Rectangle {
+        Rectangle {
+            x: 1px; y: 1px; width: 14px; height: 14px;
+            border-radius: 2px; border-width: 1.5px; border-color: root.icon-color; background: transparent;
+        }
+        Path {
+            stroke: root.icon-color; stroke-width: 1.5px;
+            viewbox-width: 16; viewbox-height: 16; width: 100%; height: 100%;
+            MoveTo { x: 8; y: 4; } LineTo { x: 8; y: 12; }
+            MoveTo { x: 8; y: 4; } LineTo { x: 5; y: 7; }
+            MoveTo { x: 8; y: 4; } LineTo { x: 11; y: 7; }
+        }
+    }
+
+    // Services — power glyph (ring + vertical mark).
+    if root.kind == 3: Rectangle {
+        Rectangle {
+            x: 3px; y: 4px; width: 10px; height: 10px;
+            border-radius: 5px; border-width: 1.8px; border-color: root.icon-color; background: transparent;
+        }
+        Rectangle { x: 7.1px; y: 1px; width: 1.8px; height: 6px; background: root.icon-color; }
+    }
+
+    // Settings — gear (two rings + eight radial teeth).
+    if root.kind == 4: Rectangle {
+        Rectangle {
+            x: 2.6px; y: 2.6px; width: 10.8px; height: 10.8px;
+            border-radius: 5.4px; border-width: 1.6px; border-color: root.icon-color; background: transparent;
+        }
+        Rectangle {
+            x: 5.3px; y: 5.3px; width: 5.4px; height: 5.4px;
+            border-radius: 2.7px; border-width: 1.6px; border-color: root.icon-color; background: transparent;
+        }
+        Path {
+            stroke: root.icon-color; stroke-width: 1.6px;
+            viewbox-width: 16; viewbox-height: 16; width: 100%; height: 100%;
+            MoveTo { x: 13.4; y: 8; }    LineTo { x: 15.5; y: 8; }
+            MoveTo { x: 11.82; y: 11.82; } LineTo { x: 13.3; y: 13.3; }
+            MoveTo { x: 8; y: 13.4; }    LineTo { x: 8; y: 15.5; }
+            MoveTo { x: 4.18; y: 11.82; } LineTo { x: 2.7; y: 13.3; }
+            MoveTo { x: 2.6; y: 8; }     LineTo { x: 0.5; y: 8; }
+            MoveTo { x: 4.18; y: 4.18; } LineTo { x: 2.7; y: 2.7; }
+            MoveTo { x: 8; y: 2.6; }     LineTo { x: 8; y: 0.5; }
+            MoveTo { x: 11.82; y: 4.18; } LineTo { x: 13.3; y: 2.7; }
+        }
+    }
+}
+
+component SideButton inherits Rectangle {
+    in property <int> kind;
+    in property <string> label;
+    in property <bool> selected;
+    in property <bool> compact;
+    callback clicked();
+    height: 38px;
+    border-radius: 6px;
+    background: root.selected ? Theme.selection-bg : (ta.has-hover ? #ffffff10 : transparent);
+
+    if root.selected: Rectangle {
+        x: 2px; y: 8px; width: 3px; height: parent.height - 16px;
+        border-radius: 2px; background: Theme.accent;
+    }
+    SideIcon {
+        kind: root.kind;
+        icon-color: root.selected ? Theme.accent : Theme.text;
+        x: root.compact ? (parent.width - self.width) / 2 : 14px;
+        y: (parent.height - self.height) / 2;
+    }
+    if !root.compact: Text {
+        text: root.label;
+        x: 42px;
+        height: 100%;
+        vertical-alignment: center;
+        color: root.selected ? Theme.accent : Theme.text;
+        font-size: 13.5px;
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component Sidebar inherits Rectangle {
+    in property <int> tab;
+    in property <bool> compact;
+    callback select(int);
+    background: Theme.sidebar-bg;
+
+    VerticalLayout {
+        padding: root.compact ? 6px : 12px;
+        spacing: 4px;
+        Rectangle { height: 6px; }
+        SideButton { kind: 0; label: "Processes"; compact: root.compact; selected: root.tab == 0; clicked => { root.select(0); } }
+        SideButton { kind: 1; label: "Performance"; compact: root.compact; selected: root.tab == 1; clicked => { root.select(1); } }
+        SideButton { kind: 2; label: "Startup apps"; compact: root.compact; selected: root.tab == 2; clicked => { root.select(2); } }
+        SideButton { kind: 3; label: "Services"; compact: root.compact; selected: root.tab == 3; clicked => { root.select(3); } }
+        Rectangle { vertical-stretch: 1; }
+        SideButton { kind: 4; label: "Settings"; compact: root.compact; selected: root.tab == 4; clicked => { root.select(4); } }
+        Rectangle { height: 6px; }
+    }
+}

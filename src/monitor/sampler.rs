@@ -9,7 +9,7 @@ use sysinfo::{
     Users,
 };
 
-use super::{gpu, processes, system};
+use super::{attribution, gpu, gpu_attribution, processes, system};
 use crate::settings::{MAX_REFRESH_MS, MIN_REFRESH_MS};
 
 const HISTORY_LEN: usize = 60;
@@ -24,7 +24,7 @@ pub struct Snapshot {
     pub sample_interval_ms: u64,
     pub system: system::SystemSummary,
     pub history: History,
-    pub processes: Vec<processes::ProcInfo>,
+    pub processes: Arc<Vec<processes::ProcInfo>>,
     pub gpus: Vec<gpu::GpuInfo>,
 }
 
@@ -42,6 +42,10 @@ pub struct History {
     pub disk_write_bps: HashMap<String, VecDeque<f64>>,
     pub gpu_util: Vec<VecDeque<f32>>,
     pub gpu_mem_pct: Vec<VecDeque<f32>>,
+    /// Optional per-sample top-N process attribution, aligned with the other
+    /// series (newest on the right). Empty unless the attribution feature is
+    /// enabled; never persisted to disk. See [`super::attribution`].
+    pub attribution: VecDeque<super::attribution::Attribution>,
 }
 
 pub struct Sampler {
@@ -59,7 +63,11 @@ pub struct Sampler {
 }
 
 impl Sampler {
-    pub fn start(refresh_ms: Arc<AtomicU64>) -> Self {
+    pub fn start(
+        refresh_ms: Arc<AtomicU64>,
+        attribution_enabled: Arc<AtomicBool>,
+        gpu_enabled: Arc<AtomicBool>,
+    ) -> Self {
         // Default off: the app opens on Performance, so the process table stays
         // empty until the user first visits the Processes tab.
         let processes_active = Arc::new(AtomicBool::new(false));
@@ -81,7 +89,15 @@ impl Sampler {
         let active_t = processes_active.clone();
         thread::Builder::new()
             .name("rproc-sampler".into())
-            .spawn(move || sampler_loop(inner_t, refresh_ms, active_t))
+            .spawn(move || {
+                sampler_loop(
+                    inner_t,
+                    refresh_ms,
+                    active_t,
+                    attribution_enabled,
+                    gpu_enabled,
+                )
+            })
             .expect("spawn sampler");
         Self {
             inner,
@@ -94,8 +110,8 @@ impl Sampler {
     }
 
     /// Tell the sampler whether the process table is currently on screen.
-    /// When false, the next tick skips the per-PID refresh and publishes an
-    /// empty process list, keeping that memory unallocated.
+    /// When false, the next tick skips the per-PID refresh; the last collected
+    /// list is retained so reopening the tab shows it immediately.
     pub fn set_processes_active(&self, on: bool) {
         self.processes_active.store(on, Ordering::Relaxed);
     }
@@ -105,6 +121,8 @@ fn sampler_loop(
     out: Arc<Mutex<Arc<Snapshot>>>,
     refresh_ms: Arc<AtomicU64>,
     processes_active: Arc<AtomicBool>,
+    attribution_enabled: Arc<AtomicBool>,
+    gpu_enabled: Arc<AtomicBool>,
 ) {
     // `System::new()` + a CPU refresh avoids `new_all()`'s upfront scan of
     // every PID's cmdline/exe/environ. The loop below repopulates the process
@@ -117,7 +135,11 @@ fn sampler_loop(
     let mut disks = Disks::new_with_refreshed_list();
     let mut components = Components::new_with_refreshed_list();
     let mut users = Users::new_with_refreshed_list();
-    let mut gpu_collector = gpu::GpuCollector::init();
+    // Lazily initialized: keeping it `None` until GPU monitoring is actually on
+    // means NVML/libcuda (~20 MB resident on NVIDIA) is never loaded when the
+    // user has GPU monitoring disabled.
+    let mut gpu_collector: Option<gpu::GpuCollector> = None;
+    let mut gpu_attr = gpu_attribution::GpuAttribution::init();
 
     // Start from whatever's been published (the prefill from disk) so we
     // don't drop the history we just loaded. After this point the working
@@ -148,31 +170,61 @@ fn sampler_loop(
         // Skipping it leaves sysinfo's per-PID map empty (we start from
         // `System::new()`), so the cmdline/exe/user strings for hundreds of
         // processes are never allocated until the user actually asks to see them.
+        // The per-PID scan is the sampler's most expensive operation, so it
+        // runs only when something on screen needs it: the Processes tab
+        // (full table) or the optional graph-attribution feature (top-N only).
+        // When hidden we keep the previous list so the tab paints it on reopen.
         let want_procs = processes_active.load(Ordering::Relaxed);
-        let procs = if want_procs {
-            sys.refresh_processes_specifics(
-                ProcessesToUpdate::All,
-                true,
-                ProcessRefreshKind::nothing()
-                    .with_cpu()
-                    .with_memory()
-                    .with_disk_usage()
-                    .with_user(sysinfo::UpdateKind::OnlyIfNotSet)
+        let want_attr = attribution_enabled.load(Ordering::Relaxed);
+        // Init NVML on first enable; once off-at-launch it's simply never loaded.
+        let want_gpu = gpu_enabled.load(Ordering::Relaxed);
+        if want_gpu && gpu_collector.is_none() {
+            gpu_collector = Some(gpu::GpuCollector::init());
+        }
+        let mut attribution = attribution::Attribution::default();
+        if want_procs || want_attr {
+            // Attribution needs only pid/name + CPU/mem/disk; the Processes
+            // table additionally wants the string-heavy cmdline/exe/user. Pull
+            // the wide set only when the table is actually showing.
+            let kind = ProcessRefreshKind::nothing()
+                .with_cpu()
+                .with_memory()
+                .with_disk_usage();
+            let kind = if want_procs {
+                kind.with_user(sysinfo::UpdateKind::OnlyIfNotSet)
                     .with_cmd(sysinfo::UpdateKind::OnlyIfNotSet)
-                    .with_exe(sysinfo::UpdateKind::OnlyIfNotSet),
-            );
-            users.refresh();
-            processes::collect(&sys, &users)
-        } else {
-            Vec::new()
-        };
+                    .with_exe(sysinfo::UpdateKind::OnlyIfNotSet)
+            } else {
+                kind
+            };
+            sys.refresh_processes_specifics(ProcessesToUpdate::All, true, kind);
+            if want_attr {
+                attribution = attribution::collect(&sys, delta_secs);
+                attribution.gpu = gpu_attr.sample(
+                    &sys,
+                    gpu_collector.as_ref().and_then(|c| c.nvml()),
+                    delta_secs,
+                );
+            }
+            if want_procs {
+                users.refresh();
+                working.processes = Arc::new(processes::collect(&sys, &users));
+            }
+        }
 
         nets.refresh(true);
         disks.refresh(true);
         components.refresh(true);
 
         let summary = system::SystemSummary::collect(&sys, &nets, &disks, &components, delta_secs);
-        let gpus = gpu_collector.sample();
+        let gpus = if want_gpu {
+            gpu_collector
+                .as_mut()
+                .map(|c| c.sample())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
 
         push_capped(
             &mut working.history.cpu_total,
@@ -266,8 +318,15 @@ fn sampler_loop(
             }
         }
 
+        if want_attr {
+            push_capped(&mut working.history.attribution, attribution, HISTORY_LEN);
+        } else if !working.history.attribution.is_empty() {
+            // Feature toggled off — drop accumulated shares so the hover overlay
+            // stops surfacing stale attribution.
+            working.history.attribution.clear();
+        }
+
         working.system = summary;
-        working.processes = procs;
         working.gpus = gpus;
         working.ready = true;
         // Surface the *current* sampling period so plot widgets can label
@@ -280,6 +339,8 @@ fn sampler_loop(
         // Publish: one Snapshot clone per tick (≈1 Hz at default settings)
         // instead of one per UI frame.
         *out.lock().unwrap() = Arc::new(working.clone());
+        // The UI polls the published snapshot on its own Slint timer, so there
+        // is no UI handle to wake here — the next poll picks this up.
 
         let elapsed = now.elapsed();
         let target = Duration::from_millis(
@@ -295,7 +356,7 @@ fn sampler_loop(
             // ~one slice instead of up to a full refresh interval (1 s default).
             // The process scan itself is only a few ms; the felt latency was
             // purely this sleep. Polling a relaxed atomic every 40 ms is free.
-            if want_procs {
+            if want_procs || want_attr {
                 thread::sleep(remaining);
             } else {
                 let slice = Duration::from_millis(40);
@@ -384,75 +445,5 @@ fn prefill_history(history: &mut History, samples: &[crate::daemon::storage::Sam
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn push_capped_grows_until_cap() {
-        let mut q: VecDeque<i32> = VecDeque::new();
-        for v in 0..5 {
-            push_capped(&mut q, v, 5);
-        }
-        assert_eq!(q.len(), 5);
-        assert_eq!(q.front(), Some(&0));
-        assert_eq!(q.back(), Some(&4));
-    }
-
-    #[test]
-    fn push_capped_drops_oldest_when_full() {
-        // Once the cap is reached, the front (oldest) drops on every push so
-        // the queue keeps a fixed-size rolling window of the most recent
-        // samples — this is the invariant the plots rely on.
-        let mut q: VecDeque<i32> = VecDeque::new();
-        for v in 0..7 {
-            push_capped(&mut q, v, 5);
-        }
-        assert_eq!(q.len(), 5);
-        assert_eq!(q.front(), Some(&2));
-        assert_eq!(q.back(), Some(&6));
-    }
-
-    #[test]
-    fn push_capped_holds_cap_under_burst() {
-        // After many pushes the queue size should plateau at exactly `cap`,
-        // never grow past it — this is the safety net the plot widgets
-        // depend on for their fixed-width X axis.
-        let mut q: VecDeque<i32> = VecDeque::new();
-        for v in 0..1000 {
-            push_capped(&mut q, v, 60);
-        }
-        assert_eq!(q.len(), 60);
-        // And the contents are the last 60 values.
-        assert_eq!(q.front(), Some(&940));
-        assert_eq!(q.back(), Some(&999));
-    }
-
-    #[test]
-    fn arc_snapshot_publication_smoke() {
-        // We can't easily exercise the sampler thread without running the
-        // full pipeline, but we CAN verify the Arc<Snapshot> publication
-        // surface keeps the cheap-clone invariant: cloning the published
-        // value must return the same pointer rather than reallocating.
-        let inner: Arc<Mutex<Arc<Snapshot>>> = Arc::new(Mutex::new(Arc::new(Snapshot::default())));
-        let a = inner.lock().unwrap().clone();
-        let b = inner.lock().unwrap().clone();
-        assert!(
-            Arc::ptr_eq(&a, &b),
-            "cloned Arcs must share the same allocation"
-        );
-
-        // Swap publishes a new Snapshot — the previous handles keep pointing
-        // at the old data, the new lock yields the new one.
-        {
-            let mut guard = inner.lock().unwrap();
-            *guard = Arc::new(Snapshot {
-                ready: true,
-                ..Snapshot::default()
-            });
-        }
-        let c = inner.lock().unwrap().clone();
-        assert!(c.ready);
-        assert!(!a.ready);
-        assert!(!Arc::ptr_eq(&a, &c));
-    }
-}
+#[path = "sampler_tests.rs"]
+mod tests;

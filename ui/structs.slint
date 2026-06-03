@@ -1,0 +1,116 @@
+// Data records shared with the Rust glue. Slint generates matching Rust structs
+// for each `export struct`, and the glue fills the window's model properties
+// from a `Snapshot` every timer tick. No nested arrays inside structs — array
+// fields live as top-level window properties instead.
+
+// One left-hand card on the Performance tab (CPU / Memory / Disk / Net / GPU).
+// `values` is the 0..1 normalized history, oldest-first; rendered as bars.
+export struct CardData {
+    id: string,
+    title: string,
+    subtitle: string,
+    value: string,
+    temp: string,
+    color: color,
+    values: [float],
+    selected: bool,
+}
+
+// A plotted series in the detail graph: 0..1 normalized history, oldest-first.
+export struct GraphSeries {
+    color: color,
+    values: [float],
+}
+
+// A small CPU per-core cell (label + value + sparkline).
+export struct CoreCell {
+    label: string,
+    value: string,
+    values: [float],
+}
+
+// label/value line in a detail or properties panel. A separator row draws a
+// thin divider and ignores the text.
+export struct StatLine {
+    label: string,
+    value: string,
+    separator: bool,
+}
+
+// Clickable path row in a properties panel.
+export struct PathField {
+    label: string,
+    path: string,
+    // false: full block (label + Open button row, then wrapped path).
+    // true: single compact line (path + Open button).
+    compact: bool,
+    // OpenTarget: open the path itself vs. its parent folder.
+    open-parent: bool,
+}
+
+// One process / group / section row in the flattened Processes table.
+// kind: 0 = section header, 1 = group header, 2 = single process, 3 = child.
+export struct ProcRow {
+    kind: int,
+    label: string,
+    pid: int,
+    pid-text: string,
+    user: string,
+    cpu: string,
+    mem: string,
+    disk: string,
+    disk-tooltip: string,
+    status: string,
+    status-color: color,
+    icon: image,
+    expanded: bool,
+    selected: bool,
+    group-key: string,
+    count: int,
+    indent: bool,
+}
+
+export struct ServiceRow {
+    index: int,
+    name: string,
+    scope: string,
+    active: string,
+    active-color: color,
+    sub: string,
+    description: string,
+}
+
+export struct StartupRow {
+    index: int,
+    name: string,
+    badge: string,
+    comment: string,
+    exec: string,
+    boot-time: string,
+    boot-known: bool,
+    enabled: bool,
+    locked: bool,
+    is-desktop: bool,
+}
+
+export struct RefreshPreset {
+    ms: int,
+    label: string,
+    selected: bool,
+}
+
+// Top-N process attribution row shown under a graph on hover.
+export struct AttribRow {
+    name: string,
+    pid: int,
+    value: string,
+}
+
+// One row in the right-click context menu. `action` is the index the Rust glue
+// uses to dispatch; a `separator` row draws a divider and ignores the rest.
+export struct MenuEntry {
+    label: string,
+    action: int,
+    enabled: bool,
+    separator: bool,
+}

@@ -1,0 +1,359 @@
+import { Theme } from "theme.slint";
+import { Card, Panel, StatRow, SmallButton } from "widgets.slint";
+import { CardData, GraphSeries, CoreCell, StatLine, PathField, ProcRow, ServiceRow, StartupRow, RefreshPreset, AttribRow, MenuEntry } from "structs.slint";
+import { Sidebar } from "sidebar.slint";
+import { Performance } from "performance.slint";
+import { Processes } from "processes.slint";
+import { Services } from "services.slint";
+import { Startup } from "startup.slint";
+import { Settings } from "settings.slint";
+import { ScrollView, Palette } from "std-widgets.slint";
+
+export { Theme }
+
+export component MainWindow inherits Window {
+    title: "rproc";
+    preferred-width: 1320px;
+    preferred-height: 820px;
+    min-width: 480px;
+    min-height: 400px;
+    background: Theme.bg;
+    // Force std-widgets (ScrollView/Slider scrollbars) to their dark styling
+    // instead of following the system light scheme.
+    init => { Palette.color-scheme = ColorScheme.dark; }
+
+    property <bool> compact: root.width < 900px;
+
+    // --- Navigation ---
+    in-out property <int> tab: 1;
+    callback select-tab(int);
+
+    // --- Performance ---
+    in property <[CardData]> perf-cards;
+    in-out property <bool> perf-detail-collapsed;
+    in property <string> perf-detail-title;
+    in property <string> perf-detail-subtitle;
+    in property <[GraphSeries]> perf-detail-series;
+    in property <[StatLine]> perf-detail-stats;
+    in property <[CoreCell]> perf-detail-cores;
+    in property <bool> perf-show-cores;
+    in property <string> perf-gpu-warning;
+    in property <bool> perf-hover-active;
+    in property <float> perf-hover-x;
+    in property <string> perf-hover-label;
+    in property <bool> perf-attrib-active;
+    in property <[AttribRow]> perf-attrib-rows;
+    in property <bool> perf-attrib-empty;
+    callback perf-select(string);
+    callback perf-toggle-detail();
+    callback perf-hovered(float);
+    callback perf-hover-cleared();
+
+    // --- Processes ---
+    in property <[ProcRow]> proc-rows;
+    in property <string> proc-count-label;
+    in property <bool> proc-sampling;
+    in-out property <string> proc-filter;
+    in property <int> proc-sort-key;
+    in property <bool> proc-sort-desc;
+    in property <int> proc-selected-pid: -1;
+    in property <string> proc-selected-group;
+    in property <int> proc-selected-count;
+    in property <string> proc-suspend-label;
+    in property <string> proc-cpu-header;
+    in property <string> proc-mem-header;
+    callback proc-filter-changed(string);
+    callback proc-sort(int);
+    callback proc-row-clicked(int);
+    callback proc-toggle-group(string);
+    callback proc-end-task();
+    callback proc-force-kill();
+    callback proc-suspend-resume();
+    callback proc-properties();
+    callback proc-open-location();
+    callback proc-search();
+    callback proc-copy-pid();
+    callback proc-end-all();
+    callback proc-force-kill-all();
+    callback proc-group-properties();
+
+    // --- Services ---
+    in property <[ServiceRow]> svc-rows;
+    in property <string> svc-count-label;
+    in property <string> svc-message;
+    in property <bool> svc-message-ok;
+    in property <bool> svc-running-only;
+    in-out property <string> svc-filter;
+    callback svc-reload();
+    callback svc-running-only-toggled();
+    callback svc-filter-changed(string);
+    callback svc-action(int, string);
+    callback svc-properties(int);
+
+    // --- Startup ---
+    in property <[StartupRow]> start-normal;
+    in property <[StartupRow]> start-critical;
+    in property <string> start-error;
+    in-out property <string> start-filter;
+    callback start-reload();
+    callback start-filter-changed(string);
+    callback start-toggle(int, bool);
+    callback start-properties(int);
+    callback start-open-desktop(int);
+
+    // --- Settings ---
+    in property <[RefreshPreset]> set-presets;
+    in property <int> set-refresh-ms;
+    in property <string> set-refresh-label;
+    in property <bool> set-daemon-enabled;
+    in property <string> set-daemon-status;
+    in property <bool> set-attribution-enabled;
+    in property <string> set-attribution-status;
+    in property <bool> set-gpu-enabled;
+    in property <string> set-gpu-status;
+    in property <string> set-version;
+    in property <string> set-build;
+    callback cfg-set-refresh(int);
+    callback cfg-daemon-toggled(bool);
+    callback cfg-attribution-toggled(bool);
+    callback cfg-gpu-toggled(bool);
+
+    // --- Properties modal (generic: process / service / startup) ---
+    in-out property <bool> prop-open;
+    in property <string> prop-title;
+    in property <[StatLine]> prop-stats;
+    in property <[PathField]> prop-paths;
+    in property <string> prop-free-label;
+    in property <string> prop-free-text;
+    in property <bool> prop-can-reload;
+    callback prop-close();
+    callback prop-reload();
+    callback open-path(string, bool);
+
+    // --- Right-click context menu (generic across tabs) ---
+    in property <bool> ctx-open;
+    in property <length> ctx-x;
+    in property <length> ctx-y;
+    in property <[MenuEntry]> ctx-items;
+    callback proc-row-context(int, length, length);
+    callback svc-row-context(int, length, length);
+    callback start-row-context(int, length, length);
+    callback ctx-activate(int);
+    callback ctx-dismiss();
+
+    // Manual placement (not a HorizontalLayout) so the sidebar width depending
+    // on `compact` (derived from window width) can't form a layout-info cycle.
+    sidebar := Sidebar {
+        x: 0;
+        y: 0;
+        width: root.compact ? 56px : 220px;
+        height: root.height;
+        tab: root.tab;
+        compact: root.compact;
+        select(t) => { root.select-tab(t); }
+    }
+    Rectangle {
+        x: sidebar.width;
+        y: 0;
+        width: root.width - sidebar.width;
+        height: root.height;
+        background: Theme.bg;
+        content := Rectangle {
+            x: 20px;
+            y: 20px;
+            width: parent.width - 40px;
+            height: parent.height - 40px;
+
+                if root.tab == 0: Processes {
+                    rows: root.proc-rows;
+                    count-label: root.proc-count-label;
+                    sampling: root.proc-sampling;
+                    filter <=> root.proc-filter;
+                    sort-key: root.proc-sort-key;
+                    sort-desc: root.proc-sort-desc;
+                    selected-pid: root.proc-selected-pid;
+                    selected-group: root.proc-selected-group;
+                    selected-count: root.proc-selected-count;
+                    suspend-label: root.proc-suspend-label;
+                    cpu-header: root.proc-cpu-header;
+                    mem-header: root.proc-mem-header;
+                    filter-changed(t) => { root.proc-filter-changed(t); }
+                    sort(k) => { root.proc-sort(k); }
+                    row-clicked(i) => { root.proc-row-clicked(i); }
+                    row-context(i, x, y) => { root.proc-row-context(i, x, y); }
+                    toggle-group(g) => { root.proc-toggle-group(g); }
+                    end-task => { root.proc-end-task(); }
+                    force-kill => { root.proc-force-kill(); }
+                    suspend-resume => { root.proc-suspend-resume(); }
+                    properties => { root.proc-properties(); }
+                    open-location => { root.proc-open-location(); }
+                    search => { root.proc-search(); }
+                    copy-pid => { root.proc-copy-pid(); }
+                    end-all => { root.proc-end-all(); }
+                    force-kill-all => { root.proc-force-kill-all(); }
+                    group-properties => { root.proc-group-properties(); }
+                }
+
+                if root.tab == 1: Performance {
+                    cards: root.perf-cards;
+                    detail-collapsed <=> root.perf-detail-collapsed;
+                    detail-title: root.perf-detail-title;
+                    detail-subtitle: root.perf-detail-subtitle;
+                    detail-series: root.perf-detail-series;
+                    detail-stats: root.perf-detail-stats;
+                    detail-cores: root.perf-detail-cores;
+                    show-cores: root.perf-show-cores;
+                    gpu-warning: root.perf-gpu-warning;
+                    hover-active: root.perf-hover-active;
+                    hover-x: root.perf-hover-x;
+                    hover-label: root.perf-hover-label;
+                    attrib-active: root.perf-attrib-active;
+                    attrib-rows: root.perf-attrib-rows;
+                    attrib-empty: root.perf-attrib-empty;
+                    select(id) => { root.perf-select(id); }
+                    toggle-detail => { root.perf-toggle-detail(); }
+                    hovered(x) => { root.perf-hovered(x); }
+                    hover-cleared => { root.perf-hover-cleared(); }
+                }
+
+                if root.tab == 2: Startup {
+                    normal: root.start-normal;
+                    critical: root.start-critical;
+                    error: root.start-error;
+                    filter <=> root.start-filter;
+                    reload => { root.start-reload(); }
+                    filter-changed(t) => { root.start-filter-changed(t); }
+                    toggle(i, e) => { root.start-toggle(i, e); }
+                    properties(i) => { root.start-properties(i); }
+                    open-desktop(i) => { root.start-open-desktop(i); }
+                    row-context(i, x, y) => { root.start-row-context(i, x, y); }
+                }
+
+                if root.tab == 3: Services {
+                    rows: root.svc-rows;
+                    count-label: root.svc-count-label;
+                    message: root.svc-message;
+                    message-ok: root.svc-message-ok;
+                    running-only: root.svc-running-only;
+                    filter <=> root.svc-filter;
+                    reload => { root.svc-reload(); }
+                    running-only-toggled => { root.svc-running-only-toggled(); }
+                    filter-changed(t) => { root.svc-filter-changed(t); }
+                    action(i, a) => { root.svc-action(i, a); }
+                    properties(i) => { root.svc-properties(i); }
+                    row-context(i, x, y) => { root.svc-row-context(i, x, y); }
+                }
+
+                if root.tab == 4: Settings {
+                    presets: root.set-presets;
+                    refresh-ms: root.set-refresh-ms;
+                    refresh-label: root.set-refresh-label;
+                    daemon-enabled: root.set-daemon-enabled;
+                    daemon-status: root.set-daemon-status;
+                    attribution-enabled: root.set-attribution-enabled;
+                    attribution-status: root.set-attribution-status;
+                    gpu-enabled: root.set-gpu-enabled;
+                    gpu-status: root.set-gpu-status;
+                    version: root.set-version;
+                    build: root.set-build;
+                    set-refresh(ms) => { root.cfg-set-refresh(ms); }
+                    daemon-toggled(e) => { root.cfg-daemon-toggled(e); }
+                    attribution-toggled(e) => { root.cfg-attribution-toggled(e); }
+                    gpu-toggled(e) => { root.cfg-gpu-toggled(e); }
+                }
+            }
+        }
+    // --- Properties modal overlay ---
+    if root.prop-open: Rectangle {
+        background: #00000099;
+        TouchArea { clicked => { root.prop-close(); } }
+        Card {
+            width: Math.min(560px, root.width - 80px);
+            height: Math.min(640px, root.height - 80px);
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
+            // Swallow clicks so the backdrop close doesn't fire when interacting.
+            TouchArea {}
+            VerticalLayout {
+                padding: 16px;
+                spacing: 8px;
+                HorizontalLayout {
+                    Text { text: root.prop-title; font-size: 16px; font-weight: 700; color: Theme.text; horizontal-stretch: 1; overflow: elide; vertical-alignment: center; }
+                    if root.prop-can-reload: SmallButton { text: "⟳"; clicked => { root.prop-reload(); } }
+                    SmallButton { text: "✕"; clicked => { root.prop-close(); } }
+                }
+                ScrollView {
+                    vertical-stretch: 1;
+                    VerticalLayout {
+                        // Pack at the top at natural sizes; without this the default
+                        // `stretch` balloons the flexible rows to fill the tall card.
+                        alignment: start;
+                        spacing: 1px;
+                        for s in root.prop-stats: Rectangle {
+                            height: s.separator ? 9px : 20px;
+                            if s.separator: Rectangle { y: 4px; height: 1px; width: 100%; background: Theme.text-dim.with-alpha(0.18); }
+                            if !s.separator: StatRow { label: s.label; value: s.value; width: 100%; }
+                        }
+                        // Tight label line, then the path + a compact Open button.
+                        for p in root.prop-paths: VerticalLayout {
+                            spacing: 0px;
+                            Text { text: p.label; color: Theme.text-dim; font-size: 12px; }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                Text { text: p.path; color: Theme.text; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; wrap: word-wrap; }
+                                SmallButton { text: "Open"; height: 20px; clicked => { root.open-path(p.path, p.open-parent); } }
+                            }
+                        }
+                        if root.prop-free-label != "": Text { text: root.prop-free-label; color: Theme.text-dim; font-size: 12px; }
+                        if root.prop-free-text != "": Text { text: root.prop-free-text; color: Theme.text; font-size: 12px; wrap: word-wrap; }
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Right-click context menu overlay ---
+    if root.ctx-open: Rectangle {
+        // Full-window catcher: any press outside the menu dismisses it.
+        TouchArea {
+            pointer-event(e) => {
+                if (e.kind == PointerEventKind.down) { root.ctx-dismiss(); }
+            }
+        }
+        Rectangle {
+            width: 220px;
+            height: popup-col.preferred-height;
+            x: Math.min(root.ctx-x, root.width - self.width - 6px);
+            y: Math.min(root.ctx-y, root.height - self.height - 6px);
+            background: Theme.card-bg;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.divider;
+            // Swallow clicks inside so the catcher above doesn't dismiss first.
+            TouchArea {}
+            popup-col := VerticalLayout {
+                padding: 4px;
+                for it in root.ctx-items: Rectangle {
+                    height: it.separator ? 9px : 26px;
+                    border-radius: 4px;
+                    background: !it.separator && it.enabled && mi-ta.has-hover ? Theme.hover-bg : transparent;
+                    if it.separator: Rectangle { y: 4px; height: 1px; width: 100%; background: Theme.divider; }
+                    if !it.separator: Text {
+                        x: 10px;
+                        width: parent.width - 20px;
+                        text: it.label;
+                        color: it.enabled ? Theme.text : Theme.text-dim;
+                        vertical-alignment: center;
+                        height: 100%;
+                        overflow: elide;
+                    }
+                    mi-ta := TouchArea {
+                        enabled: !it.separator && it.enabled;
+                        mouse-cursor: pointer;
+                        clicked => { root.ctx-activate(it.action); root.ctx-dismiss(); }
+                    }
+                }
+            }
+        }
+    }
+}

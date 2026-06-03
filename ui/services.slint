@@ -1,0 +1,85 @@
+import { Theme } from "theme.slint";
+import { Panel, SmallButton, SearchBox, Toggle } from "widgets.slint";
+import { ServiceRow } from "structs.slint";
+import { ListView } from "std-widgets.slint";
+
+export component Services inherits VerticalLayout {
+    in property <[ServiceRow]> rows;
+    in property <string> count-label;
+    in property <string> message;
+    in property <bool> message-ok;
+    in property <bool> running-only;
+    in-out property <string> filter;
+
+    callback reload();
+    callback running-only-toggled();
+    callback filter-changed(string);
+    callback action(int, string);
+    callback properties(int);
+    callback row-context(int, length, length);
+
+    spacing: 6px;
+
+    HorizontalLayout {
+        spacing: 8px;
+        Text { text: "Services"; font-size: 20px; font-weight: 700; color: Theme.text; vertical-alignment: center; }
+        Rectangle { horizontal-stretch: 1; }
+        SmallButton { text: "⟳"; clicked => { root.reload(); } }
+        Toggle { text: "Running only"; checked: root.running-only; toggled => { root.running-only-toggled(); } }
+        SearchBox { width: 180px; placeholder: "Filter…"; text <=> root.filter; edited(t) => { root.filter-changed(t); } }
+    }
+    Text { text: "systemd system + user units (.service)."; color: Theme.text-dim; }
+    if root.message != "": Text { text: root.message; color: root.message-ok ? Theme.ok : Theme.err; }
+
+    Panel {
+        vertical-stretch: 1;
+        VerticalLayout {
+            padding: 8px;
+            // Header. Same spacing as the rows below so columns line up.
+            HorizontalLayout {
+                height: 26px;
+                spacing: 4px;
+                Text { width: 280px; text: "Unit"; font-weight: 700; color: Theme.text; vertical-alignment: center; }
+                Text { width: 70px; text: "Scope"; font-weight: 700; color: Theme.text; vertical-alignment: center; }
+                Text { width: 80px; text: "Active"; font-weight: 700; color: Theme.text; vertical-alignment: center; }
+                Text { width: 80px; text: "Sub"; font-weight: 700; color: Theme.text; vertical-alignment: center; }
+                Text { horizontal-stretch: 1; text: "Description"; font-weight: 700; color: Theme.text; vertical-alignment: center; }
+                Text { width: 210px; text: "Actions"; font-weight: 700; color: Theme.text; vertical-alignment: center; }
+            }
+            ListView {
+                vertical-stretch: 1;
+                for row in root.rows: Rectangle {
+                    height: 30px;
+                    background: ta.has-hover ? #ffffff0A : transparent;
+                    // Below the action buttons so they keep their clicks; it still
+                    // catches double-click and right-click on the row body.
+                    ta := TouchArea {
+                        mouse-cursor: pointer;
+                        double-clicked => { root.properties(row.index); }
+                        pointer-event(e) => {
+                            if (e.button == PointerEventButton.right && e.kind == PointerEventKind.down) {
+                                root.row-context(row.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 4px;
+                        Text { width: 280px; text: row.name; color: Theme.text; vertical-alignment: center; overflow: elide; }
+                        Text { width: 70px; text: row.scope; color: Theme.text-dim; vertical-alignment: center; }
+                        Text { width: 80px; text: row.active; color: row.active-color; vertical-alignment: center; }
+                        Text { width: 80px; text: row.sub; color: Theme.text-dim; vertical-alignment: center; }
+                        Text { horizontal-stretch: 1; text: row.description; color: Theme.text; vertical-alignment: center; overflow: elide; }
+                        HorizontalLayout {
+                            width: 210px;
+                            spacing: 4px;
+                            SmallButton { text: "Start"; clicked => { root.action(row.index, "start"); } }
+                            SmallButton { text: "Stop"; clicked => { root.action(row.index, "stop"); } }
+                            SmallButton { text: "Restart"; clicked => { root.action(row.index, "restart"); } }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Text { text: root.count-label; color: Theme.text-dim; font-size: 11px; }
+}

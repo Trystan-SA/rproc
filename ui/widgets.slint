@@ -1,0 +1,387 @@
+import { Theme } from "theme.slint";
+import { GraphSeries, StatLine, PathField } from "structs.slint";
+
+// Rounded card matching the W11 panel look (card-bg).
+export component Card inherits Rectangle {
+    background: Theme.card-bg;
+    border-radius: 8px;
+    in-out property <length> pad: 12px;
+}
+
+export component Panel inherits Rectangle {
+    background: Theme.panel-bg;
+    border-radius: 8px;
+}
+
+// label on the left, strong value on the right.
+export component StatRow inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> value;
+    spacing: 8px;
+    Text { text: root.label; color: Theme.text-dim; vertical-alignment: center; }
+    Rectangle { horizontal-stretch: 1; }
+    Text { text: root.value; color: Theme.text; font-weight: 700; vertical-alignment: center; }
+}
+
+// A fixed-length (60-point) polyline + fill. Slint's software renderer draws a
+// Path made of static child line elements (not a dynamic `commands` string, nor
+// `for` inside a Path), so the point count is constant and Rust always feeds
+// exactly 60 values (see ui::graph). The viewbox is bound to the element's
+// pixel size so the path fills the whole area regardless of aspect ratio (a
+// fixed viewbox would letterbox, since Path preserves the viewbox aspect).
+// `values` is 0..1, oldest-first; y is flipped (0 = top).
+component Poly inherits Rectangle {
+    in property <[float]> values;
+    in property <color> line-color;
+    in property <length> thickness: 1.5px;
+    in property <float> fill-alpha: 0.18;
+    property <float> w: max(self.width / 1px, 1);
+    property <float> h: max(self.height / 1px, 1);
+    clip: true;
+    Path {
+        fill: root.line-color.with-alpha(root.fill-alpha);
+        viewbox-width: root.w;
+        viewbox-height: root.h;
+        width: 100%;
+        height: 100%;
+        MoveTo { x: 0; y: root.h; }
+        LineTo { x: 0/59*root.w; y: (1 - root.values[0]) * root.h; }
+        LineTo { x: 1/59*root.w; y: (1 - root.values[1]) * root.h; }
+        LineTo { x: 2/59*root.w; y: (1 - root.values[2]) * root.h; }
+        LineTo { x: 3/59*root.w; y: (1 - root.values[3]) * root.h; }
+        LineTo { x: 4/59*root.w; y: (1 - root.values[4]) * root.h; }
+        LineTo { x: 5/59*root.w; y: (1 - root.values[5]) * root.h; }
+        LineTo { x: 6/59*root.w; y: (1 - root.values[6]) * root.h; }
+        LineTo { x: 7/59*root.w; y: (1 - root.values[7]) * root.h; }
+        LineTo { x: 8/59*root.w; y: (1 - root.values[8]) * root.h; }
+        LineTo { x: 9/59*root.w; y: (1 - root.values[9]) * root.h; }
+        LineTo { x: 10/59*root.w; y: (1 - root.values[10]) * root.h; }
+        LineTo { x: 11/59*root.w; y: (1 - root.values[11]) * root.h; }
+        LineTo { x: 12/59*root.w; y: (1 - root.values[12]) * root.h; }
+        LineTo { x: 13/59*root.w; y: (1 - root.values[13]) * root.h; }
+        LineTo { x: 14/59*root.w; y: (1 - root.values[14]) * root.h; }
+        LineTo { x: 15/59*root.w; y: (1 - root.values[15]) * root.h; }
+        LineTo { x: 16/59*root.w; y: (1 - root.values[16]) * root.h; }
+        LineTo { x: 17/59*root.w; y: (1 - root.values[17]) * root.h; }
+        LineTo { x: 18/59*root.w; y: (1 - root.values[18]) * root.h; }
+        LineTo { x: 19/59*root.w; y: (1 - root.values[19]) * root.h; }
+        LineTo { x: 20/59*root.w; y: (1 - root.values[20]) * root.h; }
+        LineTo { x: 21/59*root.w; y: (1 - root.values[21]) * root.h; }
+        LineTo { x: 22/59*root.w; y: (1 - root.values[22]) * root.h; }
+        LineTo { x: 23/59*root.w; y: (1 - root.values[23]) * root.h; }
+        LineTo { x: 24/59*root.w; y: (1 - root.values[24]) * root.h; }
+        LineTo { x: 25/59*root.w; y: (1 - root.values[25]) * root.h; }
+        LineTo { x: 26/59*root.w; y: (1 - root.values[26]) * root.h; }
+        LineTo { x: 27/59*root.w; y: (1 - root.values[27]) * root.h; }
+        LineTo { x: 28/59*root.w; y: (1 - root.values[28]) * root.h; }
+        LineTo { x: 29/59*root.w; y: (1 - root.values[29]) * root.h; }
+        LineTo { x: 30/59*root.w; y: (1 - root.values[30]) * root.h; }
+        LineTo { x: 31/59*root.w; y: (1 - root.values[31]) * root.h; }
+        LineTo { x: 32/59*root.w; y: (1 - root.values[32]) * root.h; }
+        LineTo { x: 33/59*root.w; y: (1 - root.values[33]) * root.h; }
+        LineTo { x: 34/59*root.w; y: (1 - root.values[34]) * root.h; }
+        LineTo { x: 35/59*root.w; y: (1 - root.values[35]) * root.h; }
+        LineTo { x: 36/59*root.w; y: (1 - root.values[36]) * root.h; }
+        LineTo { x: 37/59*root.w; y: (1 - root.values[37]) * root.h; }
+        LineTo { x: 38/59*root.w; y: (1 - root.values[38]) * root.h; }
+        LineTo { x: 39/59*root.w; y: (1 - root.values[39]) * root.h; }
+        LineTo { x: 40/59*root.w; y: (1 - root.values[40]) * root.h; }
+        LineTo { x: 41/59*root.w; y: (1 - root.values[41]) * root.h; }
+        LineTo { x: 42/59*root.w; y: (1 - root.values[42]) * root.h; }
+        LineTo { x: 43/59*root.w; y: (1 - root.values[43]) * root.h; }
+        LineTo { x: 44/59*root.w; y: (1 - root.values[44]) * root.h; }
+        LineTo { x: 45/59*root.w; y: (1 - root.values[45]) * root.h; }
+        LineTo { x: 46/59*root.w; y: (1 - root.values[46]) * root.h; }
+        LineTo { x: 47/59*root.w; y: (1 - root.values[47]) * root.h; }
+        LineTo { x: 48/59*root.w; y: (1 - root.values[48]) * root.h; }
+        LineTo { x: 49/59*root.w; y: (1 - root.values[49]) * root.h; }
+        LineTo { x: 50/59*root.w; y: (1 - root.values[50]) * root.h; }
+        LineTo { x: 51/59*root.w; y: (1 - root.values[51]) * root.h; }
+        LineTo { x: 52/59*root.w; y: (1 - root.values[52]) * root.h; }
+        LineTo { x: 53/59*root.w; y: (1 - root.values[53]) * root.h; }
+        LineTo { x: 54/59*root.w; y: (1 - root.values[54]) * root.h; }
+        LineTo { x: 55/59*root.w; y: (1 - root.values[55]) * root.h; }
+        LineTo { x: 56/59*root.w; y: (1 - root.values[56]) * root.h; }
+        LineTo { x: 57/59*root.w; y: (1 - root.values[57]) * root.h; }
+        LineTo { x: 58/59*root.w; y: (1 - root.values[58]) * root.h; }
+        LineTo { x: 59/59*root.w; y: (1 - root.values[59]) * root.h; }
+        LineTo { x: root.w; y: root.h; }
+    }
+    Path {
+        stroke: root.line-color;
+        stroke-width: root.thickness;
+        viewbox-width: root.w;
+        viewbox-height: root.h;
+        width: 100%;
+        height: 100%;
+        MoveTo { x: 0; y: (1 - root.values[0]) * root.h; }
+        LineTo { x: 1/59*root.w; y: (1 - root.values[1]) * root.h; }
+        LineTo { x: 2/59*root.w; y: (1 - root.values[2]) * root.h; }
+        LineTo { x: 3/59*root.w; y: (1 - root.values[3]) * root.h; }
+        LineTo { x: 4/59*root.w; y: (1 - root.values[4]) * root.h; }
+        LineTo { x: 5/59*root.w; y: (1 - root.values[5]) * root.h; }
+        LineTo { x: 6/59*root.w; y: (1 - root.values[6]) * root.h; }
+        LineTo { x: 7/59*root.w; y: (1 - root.values[7]) * root.h; }
+        LineTo { x: 8/59*root.w; y: (1 - root.values[8]) * root.h; }
+        LineTo { x: 9/59*root.w; y: (1 - root.values[9]) * root.h; }
+        LineTo { x: 10/59*root.w; y: (1 - root.values[10]) * root.h; }
+        LineTo { x: 11/59*root.w; y: (1 - root.values[11]) * root.h; }
+        LineTo { x: 12/59*root.w; y: (1 - root.values[12]) * root.h; }
+        LineTo { x: 13/59*root.w; y: (1 - root.values[13]) * root.h; }
+        LineTo { x: 14/59*root.w; y: (1 - root.values[14]) * root.h; }
+        LineTo { x: 15/59*root.w; y: (1 - root.values[15]) * root.h; }
+        LineTo { x: 16/59*root.w; y: (1 - root.values[16]) * root.h; }
+        LineTo { x: 17/59*root.w; y: (1 - root.values[17]) * root.h; }
+        LineTo { x: 18/59*root.w; y: (1 - root.values[18]) * root.h; }
+        LineTo { x: 19/59*root.w; y: (1 - root.values[19]) * root.h; }
+        LineTo { x: 20/59*root.w; y: (1 - root.values[20]) * root.h; }
+        LineTo { x: 21/59*root.w; y: (1 - root.values[21]) * root.h; }
+        LineTo { x: 22/59*root.w; y: (1 - root.values[22]) * root.h; }
+        LineTo { x: 23/59*root.w; y: (1 - root.values[23]) * root.h; }
+        LineTo { x: 24/59*root.w; y: (1 - root.values[24]) * root.h; }
+        LineTo { x: 25/59*root.w; y: (1 - root.values[25]) * root.h; }
+        LineTo { x: 26/59*root.w; y: (1 - root.values[26]) * root.h; }
+        LineTo { x: 27/59*root.w; y: (1 - root.values[27]) * root.h; }
+        LineTo { x: 28/59*root.w; y: (1 - root.values[28]) * root.h; }
+        LineTo { x: 29/59*root.w; y: (1 - root.values[29]) * root.h; }
+        LineTo { x: 30/59*root.w; y: (1 - root.values[30]) * root.h; }
+        LineTo { x: 31/59*root.w; y: (1 - root.values[31]) * root.h; }
+        LineTo { x: 32/59*root.w; y: (1 - root.values[32]) * root.h; }
+        LineTo { x: 33/59*root.w; y: (1 - root.values[33]) * root.h; }
+        LineTo { x: 34/59*root.w; y: (1 - root.values[34]) * root.h; }
+        LineTo { x: 35/59*root.w; y: (1 - root.values[35]) * root.h; }
+        LineTo { x: 36/59*root.w; y: (1 - root.values[36]) * root.h; }
+        LineTo { x: 37/59*root.w; y: (1 - root.values[37]) * root.h; }
+        LineTo { x: 38/59*root.w; y: (1 - root.values[38]) * root.h; }
+        LineTo { x: 39/59*root.w; y: (1 - root.values[39]) * root.h; }
+        LineTo { x: 40/59*root.w; y: (1 - root.values[40]) * root.h; }
+        LineTo { x: 41/59*root.w; y: (1 - root.values[41]) * root.h; }
+        LineTo { x: 42/59*root.w; y: (1 - root.values[42]) * root.h; }
+        LineTo { x: 43/59*root.w; y: (1 - root.values[43]) * root.h; }
+        LineTo { x: 44/59*root.w; y: (1 - root.values[44]) * root.h; }
+        LineTo { x: 45/59*root.w; y: (1 - root.values[45]) * root.h; }
+        LineTo { x: 46/59*root.w; y: (1 - root.values[46]) * root.h; }
+        LineTo { x: 47/59*root.w; y: (1 - root.values[47]) * root.h; }
+        LineTo { x: 48/59*root.w; y: (1 - root.values[48]) * root.h; }
+        LineTo { x: 49/59*root.w; y: (1 - root.values[49]) * root.h; }
+        LineTo { x: 50/59*root.w; y: (1 - root.values[50]) * root.h; }
+        LineTo { x: 51/59*root.w; y: (1 - root.values[51]) * root.h; }
+        LineTo { x: 52/59*root.w; y: (1 - root.values[52]) * root.h; }
+        LineTo { x: 53/59*root.w; y: (1 - root.values[53]) * root.h; }
+        LineTo { x: 54/59*root.w; y: (1 - root.values[54]) * root.h; }
+        LineTo { x: 55/59*root.w; y: (1 - root.values[55]) * root.h; }
+        LineTo { x: 56/59*root.w; y: (1 - root.values[56]) * root.h; }
+        LineTo { x: 57/59*root.w; y: (1 - root.values[57]) * root.h; }
+        LineTo { x: 58/59*root.w; y: (1 - root.values[58]) * root.h; }
+        LineTo { x: 59/59*root.w; y: (1 - root.values[59]) * root.h; }
+    }
+}
+
+// Compact sparkline (line + faint fill).
+export component Sparkline inherits Rectangle {
+    in property <[float]> values;
+    in property <color> line-color;
+    Poly {
+        width: 100%;
+        height: 100%;
+        values: root.values;
+        line-color: root.line-color;
+        thickness: 1.5px;
+        fill-alpha: 0.18;
+    }
+}
+
+// Larger detail-view plot: faint horizontal grid + one filled line per metric.
+// The hover crosshair + readout is layered on top by the caller.
+export component Graph inherits Rectangle {
+    in property <[GraphSeries]> series;
+    clip: true;
+    for i in 4: Rectangle {
+        y: root.height * (i + 1) / 5;
+        height: 1px;
+        width: 100%;
+        background: Theme.text-dim.with-alpha(0.14);
+    }
+    for s in root.series: Poly {
+        width: 100%;
+        height: 100%;
+        values: s.values;
+        line-color: s.color;
+        thickness: 2px;
+        fill-alpha: 0.20;
+    }
+}
+
+// Generic small button used for header actions, table actions, Open, etc.
+export component SmallButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    callback clicked();
+    height: 26px;
+    border-radius: 6px;
+    background: !root.enabled ? Theme.panel-bg
+        : ta.has-hover ? Theme.active-bg : Theme.panel-bg;
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        Text {
+            text: root.text;
+            color: root.enabled ? Theme.text : Theme.text-dim;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+            font-size: 12px;
+        }
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// Pill-shaped toggle (Enabled / Disabled / Running only ...).
+export component Toggle inherits Rectangle {
+    in property <string> text;
+    in property <bool> checked;
+    in property <bool> enabled: true;
+    callback toggled();
+    height: 28px;
+    border-radius: 6px;
+    background: root.checked ? Theme.selection-bg
+        : ta.has-hover && root.enabled ? Theme.active-bg : Theme.panel-bg;
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        Text {
+            text: root.text;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+            color: root.checked ? Theme.accent : (root.enabled ? Theme.text : Theme.text-dim);
+            font-weight: 700;
+            font-size: 12px;
+        }
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { root.toggled(); }
+    }
+}
+
+// Themed slider. The std-widgets Slider ignores our forced dark palette and
+// renders with the light Fluent track/handle, so we draw our own.
+export component ThemedSlider inherits Rectangle {
+    in property <float> minimum;
+    in property <float> maximum;
+    in-out property <float> value;
+    callback changed(float);
+    height: 20px;
+    min-width: 80px;
+    property <float> ratio: Math.max(0, Math.min(1, (root.value - root.minimum) / Math.max(root.maximum - root.minimum, 0.001)));
+    Rectangle {
+        y: (parent.height - self.height) / 2;
+        height: 4px;
+        border-radius: 2px;
+        background: Theme.panel-bg;
+        Rectangle {
+            x: 0;
+            width: parent.width * root.ratio;
+            height: 100%;
+            border-radius: 2px;
+            background: Theme.accent;
+        }
+    }
+    Rectangle {
+        width: 14px;
+        height: 14px;
+        border-radius: 7px;
+        x: root.ratio * (parent.width - self.width);
+        y: (parent.height - self.height) / 2;
+        background: ta.has-hover || ta.pressed ? Theme.accent : Theme.text;
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        moved => { root.set-from(self.mouse-x); }
+        clicked => { root.set-from(self.mouse-x); }
+    }
+    function set-from(px: length) {
+        root.value = root.minimum + Math.max(0, Math.min(1, px / root.width)) * (root.maximum - root.minimum);
+        root.changed(root.value);
+    }
+}
+
+// Single-line text input with a hint. Thin wrapper around the std LineEdit look,
+// kept local so the whole UI shares one style without importing the widget set.
+export component SearchBox inherits Rectangle {
+    in property <string> placeholder;
+    in-out property <string> text <=> input.text;
+    callback edited(string);
+    height: 28px;
+    width: 220px;
+    border-radius: 6px;
+    background: Theme.panel-bg;
+    border-width: 1px;
+    border-color: input.has-focus ? Theme.accent : transparent;
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        Rectangle {
+            if root.text == "": Text {
+                text: root.placeholder;
+                color: Theme.text-dim;
+                vertical-alignment: center;
+                x: 0;
+            }
+            input := TextInput {
+                color: Theme.text;
+                vertical-alignment: center;
+                single-line: true;
+                font-size: 13px;
+                edited => { root.edited(self.text); }
+            }
+        }
+    }
+}
+
+// Checkbox with a themed label (the std-widgets one renders its text in the
+// default style's near-black, which is invisible on our dark background).
+export component Check inherits Rectangle {
+    in property <string> text;
+    in property <bool> checked;
+    callback toggled();
+    height: 24px;
+    box := Rectangle {
+        x: 0;
+        y: (parent.height - self.height) / 2;
+        width: 18px;
+        height: 18px;
+        border-radius: 4px;
+        border-width: 1.5px;
+        border-color: root.checked ? Theme.accent : Theme.text-dim;
+        background: root.checked ? Theme.accent : transparent;
+        if root.checked: Path {
+            stroke: Theme.bg;
+            stroke-width: 2px;
+            viewbox-width: 18;
+            viewbox-height: 18;
+            width: 100%;
+            height: 100%;
+            MoveTo { x: 4; y: 9; }
+            LineTo { x: 7.5; y: 13; }
+            LineTo { x: 14; y: 5; }
+        }
+    }
+    Text {
+        x: 26px;
+        width: parent.width - 26px;
+        height: 100%;
+        vertical-alignment: center;
+        text: root.text;
+        color: Theme.text;
+        font-weight: 700;
+    }
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.toggled(); }
+    }
+}

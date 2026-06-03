@@ -1,0 +1,132 @@
+import { Theme } from "theme.slint";
+import { Card, Toggle, StatRow, Check, ThemedSlider } from "widgets.slint";
+import { RefreshPreset } from "structs.slint";
+import { ScrollView } from "std-widgets.slint";
+
+export component Settings inherits ScrollView {
+    in property <[RefreshPreset]> presets;
+    in property <int> refresh-ms;
+    in property <string> refresh-label;
+    in property <bool> daemon-enabled;
+    in property <string> daemon-status;
+    in property <bool> attribution-enabled;
+    in property <string> attribution-status;
+    in property <bool> gpu-enabled;
+    in property <string> gpu-status;
+    in property <string> version;
+    in property <string> build;
+
+    callback set-refresh(int);
+    callback daemon-toggled(bool);
+    callback attribution-toggled(bool);
+    callback gpu-toggled(bool);
+
+    VerticalLayout {
+        spacing: 12px;
+        padding-right: 12px;
+        Text { text: "Settings"; font-size: 20px; font-weight: 700; color: Theme.text; }
+        Text { text: "Tweak how rproc samples and displays system data."; color: Theme.text-dim; }
+
+        Card {
+            VerticalLayout {
+                padding: 12px;
+                spacing: 8px;
+                Text { text: "Refresh rate"; font-weight: 700; font-size: 15px; color: Theme.text; }
+                Text {
+                    text: "How often the sampler thread polls the system. Lower intervals feel snappier but use more CPU.";
+                    color: Theme.text-dim; font-size: 11px; wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    spacing: 6px;
+                    // start-aligned so chips size to their content instead of
+                    // each stretching to an equal share of the full width.
+                    alignment: start;
+                    for p in root.presets: Toggle {
+                        text: p.label;
+                        min-width: 76px;
+                        checked: p.selected;
+                        toggled => { root.set-refresh(p.ms); }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text { text: "Custom"; color: Theme.text-dim; font-size: 11px; vertical-alignment: center; }
+                    ThemedSlider {
+                        horizontal-stretch: 1;
+                        minimum: 100;
+                        maximum: 30000;
+                        value: root.refresh-ms;
+                        changed(v) => { root.set-refresh(v); }
+                    }
+                    Text { text: root.refresh-ms + " ms"; color: Theme.text; vertical-alignment: center; }
+                }
+                Text { text: root.refresh-label; color: Theme.accent; font-weight: 700; }
+            }
+        }
+
+        Card {
+            VerticalLayout {
+                padding: 12px;
+                spacing: 8px;
+                Text { text: "Background history"; font-weight: 700; font-size: 15px; color: Theme.text; }
+                Text {
+                    text: "Run a tiny background process that records the last 60 s of CPU, memory, disk, network and GPU activity, so rproc shows recent history the moment you reopen it — even after a restart.";
+                    color: Theme.text-dim; font-size: 11px; wrap: word-wrap;
+                }
+                Check {
+                    text: "Keep the last 60 seconds in the background";
+                    checked: root.daemon-enabled;
+                    toggled => { root.daemon-toggled(!root.daemon-enabled); }
+                }
+                Text { text: root.daemon-status; color: root.daemon-enabled ? Theme.accent : Theme.text-dim; font-weight: 700; }
+            }
+        }
+
+        Card {
+            VerticalLayout {
+                padding: 12px;
+                spacing: 8px;
+                Text { text: "Per-process graph attribution"; font-weight: 700; font-size: 15px; color: Theme.text; }
+                Text {
+                    text: "Record the heaviest processes behind each point on the CPU, memory, disk and GPU graphs. When on, hover any point to see the top processes. This makes the sampler scan the full process list every tick, so it's off by default.";
+                    color: Theme.text-dim; font-size: 11px; wrap: word-wrap;
+                }
+                Check {
+                    text: "Show top processes on graph hover";
+                    checked: root.attribution-enabled;
+                    toggled => { root.attribution-toggled(!root.attribution-enabled); }
+                }
+                Text { text: root.attribution-status; color: root.attribution-enabled ? Theme.accent : Theme.text-dim; font-weight: 700; }
+            }
+        }
+
+        Card {
+            VerticalLayout {
+                padding: 12px;
+                spacing: 8px;
+                Text { text: "GPU monitoring"; font-weight: 700; font-size: 15px; color: Theme.text; }
+                Text {
+                    text: "Read GPU utilization, VRAM, temperature and power. On NVIDIA this loads the NVML/CUDA libraries (~20 MB resident). Turn it off to reclaim that memory if you don't need GPU stats — restart rproc for the full saving once it has been loaded.";
+                    color: Theme.text-dim; font-size: 11px; wrap: word-wrap;
+                }
+                Check {
+                    text: "Monitor the GPU";
+                    checked: root.gpu-enabled;
+                    toggled => { root.gpu-toggled(!root.gpu-enabled); }
+                }
+                Text { text: root.gpu-status; color: root.gpu-enabled ? Theme.accent : Theme.text-dim; font-weight: 700; }
+            }
+        }
+
+        Card {
+            VerticalLayout {
+                padding: 12px;
+                spacing: 4px;
+                Text { text: "About"; font-weight: 700; font-size: 15px; color: Theme.text; }
+                StatRow { label: "Version"; value: root.version; }
+                StatRow { label: "Build"; value: root.build; }
+            }
+        }
+        Rectangle { height: 8px; }
+    }
+}

@@ -1,0 +1,223 @@
+import { Theme } from "theme.slint";
+import { Card, Panel, StatRow, Sparkline, Graph } from "widgets.slint";
+import { CardData, GraphSeries, CoreCell, StatLine, AttribRow } from "structs.slint";
+import { ScrollView } from "std-widgets.slint";
+
+component PerfCard inherits Card {
+    in property <CardData> data;
+    callback clicked();
+    background: data.selected ? Theme.selection-bg : Theme.card-bg;
+    height: 92px;
+    VerticalLayout {
+        padding: 10px;
+        spacing: 2px;
+        HorizontalLayout {
+            spacing: 6px;
+            Text { text: data.title; color: Theme.text; font-weight: 700; }
+            Rectangle { horizontal-stretch: 1; }
+            if data.temp != "": Text { text: data.temp; color: Theme.text-dim; font-size: 11px; vertical-alignment: center; }
+            Text { text: data.value; color: data.color; font-weight: 700; font-size: 15px; }
+        }
+        Text { text: data.subtitle; color: Theme.text-dim; font-size: 11px; overflow: elide; }
+        Sparkline {
+            vertical-stretch: 1;
+            values: data.values;
+            line-color: data.color;
+        }
+    }
+    TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+export component Performance inherits Rectangle {
+    in property <[CardData]> cards;
+    in-out property <bool> detail-collapsed;
+    in property <string> detail-title;
+    in property <string> detail-subtitle;
+    in property <[GraphSeries]> detail-series;
+    in property <[StatLine]> detail-stats;
+    in property <[CoreCell]> detail-cores;
+    in property <bool> show-cores;
+    in property <string> gpu-warning;
+    in property <bool> hover-active;
+    in property <float> hover-x;            // 0..1 across the graph
+    in property <string> hover-label;       // time + per-series values
+    in property <bool> attrib-active;
+    in property <[AttribRow]> attrib-rows;
+    in property <bool> attrib-empty;
+
+    callback select(string);
+    callback toggle-detail();
+    callback hovered(float);
+    callback hover-cleared();
+
+    property <bool> auto-hide: root.width < 600px;
+    property <bool> hide-detail: root.auto-hide || root.detail-collapsed;
+
+    HorizontalLayout {
+        spacing: 8px;
+
+        // Cards column.
+        cards-col := ScrollView {
+            width: root.hide-detail ? root.width : 250px;
+            VerticalLayout {
+                spacing: 6px;
+                // Leave room on the right so the scrollbar doesn't overlap cards.
+                padding-right: 12px;
+                // Expand button — only when the user collapsed it (not the
+                // narrow-width auto-hide, which has nowhere to expand to).
+                if root.detail-collapsed && !root.auto-hide: HorizontalLayout {
+                    alignment: end;
+                    Rectangle {
+                        width: 26px; height: 26px; border-radius: 6px;
+                        background: expand-ta.has-hover ? #ffffff18 : #ffffff10;
+                        Text { text: "‹"; color: Theme.text; horizontal-alignment: center; vertical-alignment: center; font-size: 16px; }
+                        expand-ta := TouchArea { mouse-cursor: pointer; clicked => { root.detail-collapsed = false; root.toggle-detail(); } }
+                    }
+                }
+                for c in root.cards: PerfCard { data: c; clicked => { root.select(c.id); } }
+                Rectangle { height: 4px; }
+            }
+        }
+
+        // Detail pane.
+        if !root.hide-detail: VerticalLayout {
+            spacing: 8px;
+            // Title shares the top row with the collapse button so there's no
+            // empty band above it; it lines up with the top of the cards column.
+            HorizontalLayout {
+                spacing: 8px;
+                Text {
+                    text: root.detail-title;
+                    color: Theme.text;
+                    font-size: 20px;
+                    font-weight: 700;
+                    horizontal-stretch: 1;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                Rectangle {
+                    width: 26px; height: 26px; border-radius: 6px;
+                    background: collapse-ta.has-hover ? #ffffff18 : #ffffff10;
+                    Text { text: "›"; color: Theme.text; horizontal-alignment: center; vertical-alignment: center; font-size: 16px; }
+                    collapse-ta := TouchArea { mouse-cursor: pointer; clicked => { root.detail-collapsed = true; root.toggle-detail(); } }
+                }
+            }
+            ScrollView {
+                VerticalLayout {
+                    spacing: 8px;
+                    padding-right: 12px;
+                    Text { text: root.detail-subtitle; color: Theme.text-dim; }
+
+                    if root.gpu-warning != "": Rectangle {
+                        background: #FFC44D1C; border-radius: 8px;
+                        VerticalLayout {
+                            padding: 12px; spacing: 4px;
+                            Text { text: "GPU utilization unavailable"; color: Theme.warn; font-weight: 700; }
+                            Text { text: root.gpu-warning; color: Theme.text-dim; wrap: word-wrap; }
+                        }
+                    }
+
+                    Card {
+                        VerticalLayout {
+                            padding: 12px; spacing: 6px;
+                            Text { text: "Usage (last 60s)"; color: Theme.text; }
+                            graph-box := Rectangle {
+                                height: 180px;
+                                Graph { series: root.detail-series; width: 100%; height: 100%; }
+                                // Hover crosshair + readout.
+                                if root.hover-active: Rectangle {
+                                    x: root.hover-x * parent.width;
+                                    width: 1px; height: 100%;
+                                    background: Theme.text-dim;
+                                }
+                                if root.hover-active: Text {
+                                    x: root.hover-x > 0.5 ? 4px : parent.width - self.width - 4px;
+                                    y: 4px;
+                                    text: root.hover-label;
+                                    color: Theme.text;
+                                    font-weight: 700;
+                                    horizontal-alignment: root.hover-x > 0.5 ? left : right;
+                                }
+                                hover-ta := TouchArea {
+                                    mouse-cursor: crosshair;
+                                    // Track the pointer on plain hover (no press). `moved` only
+                                    // fires while a button is held, so react to mouse-x instead.
+                                    changed mouse-x => { root.hovered(self.mouse-x / graph-box.width); }
+                                    changed has-hover => { if (!self.has-hover) { root.hover-cleared(); } }
+                                }
+                            }
+
+                            if root.attrib-active: Panel {
+                                // Fixed height (header + up to TOP_N=5 rows) so moving
+                                // the cursor doesn't shift everything below it.
+                                height: 138px;
+                                clip: true;
+                                VerticalLayout {
+                                    padding: 10px; spacing: 4px;
+                                    if !root.hover-active: Text {
+                                        text: "Hover the graph to see which processes were busiest at that moment.";
+                                        color: Theme.text-dim; font-size: 11px; wrap: word-wrap;
+                                    }
+                                    if root.hover-active && root.attrib-empty: Text {
+                                        text: "No measurable process activity at this point.";
+                                        color: Theme.text-dim; font-size: 11px;
+                                    }
+                                    if root.hover-active && !root.attrib-empty: Text {
+                                        text: "Top processes at cursor"; font-weight: 700; font-size: 11px; color: Theme.text;
+                                    }
+                                    if root.hover-active && !root.attrib-empty: VerticalLayout {
+                                        spacing: 2px;
+                                        for a in root.attrib-rows: HorizontalLayout {
+                                            Text { text: a.name; color: Theme.text; }
+                                            Text { text: " (" + a.pid + ")"; color: Theme.text-dim; font-size: 11px; }
+                                            Rectangle { horizontal-stretch: 1; }
+                                            Text { text: a.value; color: Theme.accent; font-weight: 700; }
+                                        }
+                                    }
+                                    Rectangle { vertical-stretch: 1; }
+                                }
+                            }
+
+                            for s in root.detail-stats: Rectangle {
+                                height: s.separator ? 9px : 22px;
+                                if s.separator: Rectangle { y: 4px; height: 1px; width: 100%; background: Theme.text-dim.with-alpha(0.18); }
+                                if !s.separator: StatRow { label: s.label; value: s.value; width: 100%; }
+                            }
+                        }
+                    }
+
+                    if root.show-cores: Card {
+                        VerticalLayout {
+                            padding: 12px; spacing: 4px;
+                            Text { text: "Per-core usage"; color: Theme.text; }
+                            grid := Rectangle {
+                                property <length> gap: 6px;
+                                property <length> cellw: (self.width - 3 * self.gap) / 4;
+                                property <length> cellh: 56px;
+                                height: Math.ceil(root.detail-cores.length / 4) * (self.cellh + self.gap);
+                                for cell[i] in root.detail-cores: Rectangle {
+                                    x: Math.mod(i, 4) * (grid.cellw + grid.gap);
+                                    y: Math.floor(i / 4) * (grid.cellh + grid.gap);
+                                    width: grid.cellw;
+                                    height: grid.cellh;
+                                    VerticalLayout {
+                                        HorizontalLayout {
+                                            Text { text: cell.label; font-weight: 700; font-size: 11px; color: Theme.text; }
+                                            Rectangle { horizontal-stretch: 1; }
+                                            Text { text: cell.value; font-size: 11px; color: Theme.text; }
+                                        }
+                                        Sparkline {
+                                            height: 32px;
+                                            values: cell.values;
+                                            line-color: Theme.graph-cpu;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

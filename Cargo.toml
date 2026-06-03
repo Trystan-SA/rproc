@@ -5,16 +5,26 @@ edition = "2024"
 description = "Resource & process monitor for Linux, inspired by Windows 11 Task Manager"
 license = "MIT"
 
+# UI: Slint with the software renderer only — no GPU buffers, smallest resident
+# footprint. `software-renderer-path` is required for the software renderer to
+# draw `Path` elements (graphs, icons). Default features are off so we skip the
+# GPU (femtovg) renderer and accessibility bridge.
 [dependencies]
-eframe = { version = "0.32", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
-egui = "0.32"
-egui_plot = "0.33"
-egui_extras = { version = "0.32", default-features = false, features = ["image", "svg"] }
+slint = { version = "=1.16.1", default-features = false, features = ["compat-1-2", "std", "backend-winit", "renderer-software", "software-renderer-path"] }
+# Process icons are decoded and downscaled to display size here (not via Slint's
+# image loaders) so a 256x256 themed PNG/SVG costs ~1 KB resident, not ~256 KB.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# Icons are shapes; drop resvg's default `text`/font features (they pull usvg's
+# fontdb + system fontconfig and a text-shaping stack we don't need).
+resvg = { version = "0.47", default-features = false }
 sysinfo = "0.33"
 nvml-wrapper = "0.11"
 anyhow = "1"
 libc = "0.2"
+
+[build-dependencies]
+slint-build = "1.16"
+
 
 [profile.release]
 opt-level = 3

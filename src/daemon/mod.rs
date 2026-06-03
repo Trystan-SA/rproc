@@ -45,7 +45,14 @@ pub fn run() -> anyhow::Result<()> {
     let mut nets = Networks::new_with_refreshed_list();
     let mut disks = Disks::new_with_refreshed_list();
     let mut components = Components::new_with_refreshed_list();
-    let mut gpu_collector = gpu::GpuCollector::init();
+    // Skip NVML/libcuda (~20 MB) unless GPU monitoring is on. Read once at start;
+    // the daemon is restarted when the GUI toggles it.
+    let gpu_enabled = crate::settings::Settings::load().gpu_enabled();
+    let mut gpu_collector = if gpu_enabled {
+        Some(gpu::GpuCollector::init())
+    } else {
+        None
+    };
 
     // sysinfo CPU usage needs two refreshes spaced apart to compute deltas.
     sys.refresh_cpu_usage();
@@ -64,7 +71,10 @@ pub fn run() -> anyhow::Result<()> {
         components.refresh(true);
 
         let summary = msystem::SystemSummary::collect(&sys, &nets, &disks, &components, delta_secs);
-        let gpus = gpu_collector.sample();
+        let gpus = gpu_collector
+            .as_mut()
+            .map(|c| c.sample())
+            .unwrap_or_default();
 
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)

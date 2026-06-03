@@ -178,6 +178,17 @@ fn disk_temperature(name: &str) -> f32 {
     0.0
 }
 
+/// Current CPU frequency in MHz, read from sysfs.
+fn current_cpu_freq() -> u64 {
+    if let Ok(freq) =
+        std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq")
+        && let Ok(khz) = freq.trim().parse::<u64>()
+    {
+        return khz / 1000;
+    }
+    0
+}
+
 impl SystemSummary {
     /// Build a snapshot of the current system state.
     ///
@@ -201,7 +212,7 @@ impl SystemSummary {
             .first()
             .map(|c| c.brand().to_string())
             .unwrap_or_default();
-        let cpu_freq_mhz = sys.cpus().first().map(|c| c.frequency()).unwrap_or(0);
+        let cpu_freq_mhz = current_cpu_freq();
         let logical_cores = sys.cpus().len();
         let physical_cores = sys.physical_core_count().unwrap_or(logical_cores);
         let cpu_temp_c = cpu_temperature(components);
