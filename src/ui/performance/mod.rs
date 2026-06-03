@@ -262,9 +262,6 @@ fn apply_detail(window: &MainWindow, state: &State, snap: &Snapshot, attribution
     let mut cores: Vec<CoreCell> = Vec::new();
     let mut show_cores = false;
     let mut gpu_warning = String::new();
-    let mut attrib_kind: Option<attribution::Kind> = None;
-    // Per-series labels used by the hover readout.
-    let mut series_data: Vec<(String, SeriesRef<'_>)> = Vec::new();
 
     match state.section {
         Section::Cpu => {
@@ -278,7 +275,6 @@ fn apply_detail(window: &MainWindow, state: &State, snap: &Snapshot, attribution
                 100.0,
                 theme::graph_cpu(),
             ));
-            series_data.push((String::new(), SeriesRef::F32(&snap.history.cpu_total, true)));
             stats.push(stat("Current", &format!("{:.0}%", snap.system.cpu_total)));
             stats.push(stat("Uptime", &format_duration(snap.system.uptime_secs)));
             show_cores = true;
@@ -290,7 +286,6 @@ fn apply_detail(window: &MainWindow, state: &State, snap: &Snapshot, attribution
                     values: graph::norm_f32(h, 100.0),
                 });
             }
-            attrib_kind = Some(attribution::Kind::Cpu);
         }
         Section::Memory => {
             title = "Memory".into();
@@ -299,10 +294,6 @@ fn apply_detail(window: &MainWindow, state: &State, snap: &Snapshot, attribution
                 &snap.history.ram_used_pct,
                 100.0,
                 theme::graph_ram(),
-            ));
-            series_data.push((
-                String::new(),
-                SeriesRef::F32(&snap.history.ram_used_pct, true),
             ));
             stats.push(stat(
                 "Used",
@@ -319,7 +310,6 @@ fn apply_detail(window: &MainWindow, state: &State, snap: &Snapshot, attribution
             stats.push(separator());
             stats.push(stat("Swap total", &format_bytes(snap.system.swap_total)));
             stats.push(stat("Swap used", &format_bytes(snap.system.swap_used)));
-            attrib_kind = Some(attribution::Kind::Ram);
         }
         Section::Disk(i) => {
             if let Some(d) = snap.system.disks.get(i) {
@@ -343,8 +333,6 @@ fn apply_detail(window: &MainWindow, state: &State, snap: &Snapshot, attribution
                 let max = widgets::max_in(r.iter().zip(w.iter()).map(|(a, b)| a + b)).max(1.0);
                 series.push(series_f64(r, max, theme::graph_disk()));
                 series.push(series_f64(w, max, theme::graph_net()));
-                series_data.push(("read".into(), SeriesRef::F64(r)));
-                series_data.push(("write".into(), SeriesRef::F64(w)));
                 stats.push(stat("Read", &widgets::format_bps(d.read_bps)));
                 stats.push(stat("Write", &widgets::format_bps(d.write_bps)));
                 stats.push(separator());
@@ -356,7 +344,6 @@ fn apply_detail(window: &MainWindow, state: &State, snap: &Snapshot, attribution
                         stats.push(stat("Mount", m));
                     }
                 }
-                attrib_kind = Some(attribution::Kind::Disk);
             } else {
                 title = "No disk".into();
             }
@@ -370,8 +357,6 @@ fn apply_detail(window: &MainWindow, state: &State, snap: &Snapshot, attribution
                 let max = widgets::max_in(rx.iter().chain(tx.iter()).copied()).max(1.0);
                 series.push(series_f64(rx, max, theme::graph_net()));
                 series.push(series_f64(tx, max, theme::graph_disk()));
-                series_data.push(("rx".into(), SeriesRef::F64(rx)));
-                series_data.push(("tx".into(), SeriesRef::F64(tx)));
                 stats.push(stat("Receive", &widgets::format_bps(n.rx_bps)));
                 stats.push(stat("Send", &widgets::format_bps(n.tx_bps)));
                 stats.push(separator());
@@ -401,8 +386,6 @@ fn apply_detail(window: &MainWindow, state: &State, snap: &Snapshot, attribution
                 let mem = snap.history.gpu_mem_pct.get(i).unwrap_or(&empty_f32);
                 series.push(series_f32(util, 100.0, theme::graph_gpu()));
                 series.push(series_f32(mem, 100.0, theme::graph_ram()));
-                series_data.push(("util".into(), SeriesRef::F32(util, true)));
-                series_data.push(("vram".into(), SeriesRef::F32(mem, true)));
                 let util_label = if g.util_pct.is_nan() {
                     "N/A".to_string()
                 } else {
@@ -432,7 +415,6 @@ fn apply_detail(window: &MainWindow, state: &State, snap: &Snapshot, attribution
                 if g.mem_clock_mhz > 0 {
                     stats.push(stat("Memory clock", &format!("{} MHz", g.mem_clock_mhz)));
                 }
-                attrib_kind = Some(attribution::Kind::Gpu);
             } else {
                 title = "No GPU".into();
             }
@@ -447,7 +429,74 @@ fn apply_detail(window: &MainWindow, state: &State, snap: &Snapshot, attribution
     window.set_perf_show_cores(show_cores);
     window.set_perf_gpu_warning(ss(&gpu_warning));
 
-    // Hover crosshair + readout.
+    // Crosshair, readout and attribution depend only on the hovered sample, not
+    // on the series/cores models built above. Refresh them in their own pass so
+    // a pointer move can update just the overlay — replacing the detail models
+    // here would recreate every delegate (and relayout) on each mouse move.
+    apply_hover(window, state, snap, attribution_enabled);
+}
+
+/// Per-section series refs feeding the hover readout, plus the attribution kind
+/// that section maps to. Read-only and allocation-light (no model building), so
+/// it is cheap to recompute on every pointer move.
+fn section_refs<'a>(
+    section: Section,
+    snap: &'a Snapshot,
+    empty_f32: &'a VecDeque<f32>,
+    empty_f64: &'a VecDeque<f64>,
+) -> (Vec<(String, SeriesRef<'a>)>, Option<attribution::Kind>) {
+    let mut data: Vec<(String, SeriesRef<'a>)> = Vec::new();
+    let kind = match section {
+        Section::Cpu => {
+            data.push((String::new(), SeriesRef::F32(&snap.history.cpu_total, true)));
+            Some(attribution::Kind::Cpu)
+        }
+        Section::Memory => {
+            data.push((
+                String::new(),
+                SeriesRef::F32(&snap.history.ram_used_pct, true),
+            ));
+            Some(attribution::Kind::Ram)
+        }
+        Section::Disk(i) => snap.system.disks.get(i).map(|d| {
+            let r = snap.history.disk_read_bps.get(&d.name).unwrap_or(empty_f64);
+            let w = snap
+                .history
+                .disk_write_bps
+                .get(&d.name)
+                .unwrap_or(empty_f64);
+            data.push(("read".into(), SeriesRef::F64(r)));
+            data.push(("write".into(), SeriesRef::F64(w)));
+            attribution::Kind::Disk
+        }),
+        Section::Network(i) => {
+            if let Some(n) = snap.system.nets.get(i) {
+                let rx = snap.history.net_rx_bps.get(&n.name).unwrap_or(empty_f64);
+                let tx = snap.history.net_tx_bps.get(&n.name).unwrap_or(empty_f64);
+                data.push(("rx".into(), SeriesRef::F64(rx)));
+                data.push(("tx".into(), SeriesRef::F64(tx)));
+            }
+            None
+        }
+        Section::Gpu(i) => snap.gpus.get(i).map(|_| {
+            let util = snap.history.gpu_util.get(i).unwrap_or(empty_f32);
+            let mem = snap.history.gpu_mem_pct.get(i).unwrap_or(empty_f32);
+            data.push(("util".into(), SeriesRef::F32(util, true)));
+            data.push(("vram".into(), SeriesRef::F32(mem, true)));
+            attribution::Kind::Gpu
+        }),
+    };
+    (data, kind)
+}
+
+/// Updates only the hover crosshair, readout label and attribution rows for the
+/// current section. Cheap enough to run on every pointer move — it never
+/// rebuilds the detail series, per-core graphs or stat models.
+pub fn apply_hover(window: &MainWindow, state: &State, snap: &Snapshot, attribution_enabled: bool) {
+    let empty_f32: VecDeque<f32> = VecDeque::new();
+    let empty_f64: VecDeque<f64> = VecDeque::new();
+    let (series_data, attrib_kind) = section_refs(state.section, snap, &empty_f32, &empty_f64);
+
     let hover = state.hover;
     window.set_perf_hover_active(hover.is_some());
     if let Some(x) = hover {
@@ -471,7 +520,6 @@ fn apply_detail(window: &MainWindow, state: &State, snap: &Snapshot, attribution
         window.set_perf_hover_label(ss(""));
     }
 
-    // Attribution panel.
     let history = &snap.history.attribution;
     let active = attribution_enabled && attrib_kind.is_some() && !history.is_empty();
     window.set_perf_attrib_active(active);

@@ -164,13 +164,35 @@ fn install_callbacks(window: &MainWindow, state: &Rc<RefCell<UiState>>) {
     window.on_perf_toggle_detail(handler!(|w, s| {
         s.perf.detail_collapsed = w.get_perf_detail_collapsed();
     }));
-    window.on_perf_hovered(handler!(|w, s, x: f32| {
-        let span = (widgets::HISTORY_LEN - 1) as f64;
-        s.perf.hover = Some((x as f64 * span).round().clamp(0.0, span));
-    }));
-    window.on_perf_hover_cleared(handler!(|w, s| {
-        s.perf.hover = None;
-    }));
+    // Hover updates only the crosshair/readout overlay, so they bypass the full
+    // `render()` the macro emits and refresh just the overlay — a full re-render
+    // per pointer move recreated the detail delegates and could feed back into
+    // `mouse-x changed`, stalling the UI.
+    window.on_perf_hovered({
+        let st = state.clone();
+        let weak = window.as_weak();
+        move |x: f32| {
+            if let Some(w) = weak.upgrade() {
+                let mut s = st.borrow_mut();
+                let span = (widgets::HISTORY_LEN - 1) as f64;
+                s.perf.hover = Some((x as f64 * span).round().clamp(0.0, span));
+                let enabled = s.settings.attribution_enabled();
+                performance::apply_hover(&w, &s.perf, &s.snapshot, enabled);
+            }
+        }
+    });
+    window.on_perf_hover_cleared({
+        let st = state.clone();
+        let weak = window.as_weak();
+        move || {
+            if let Some(w) = weak.upgrade() {
+                let mut s = st.borrow_mut();
+                s.perf.hover = None;
+                let enabled = s.settings.attribution_enabled();
+                performance::apply_hover(&w, &s.perf, &s.snapshot, enabled);
+            }
+        }
+    });
 
     // --- Processes ---
     window.on_proc_filter_changed(handler!(|w, s, t: SharedString| {
