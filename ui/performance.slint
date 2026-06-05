@@ -147,6 +147,10 @@ export component Performance inherits Rectangle {
             }
             ScrollView {
                 VerticalLayout {
+                    // Top-pack the content: the default stretch alignment
+                    // balloons the cards when the section is shorter than the
+                    // viewport, opening a void above the graph.
+                    alignment: start;
                     spacing: 8px;
                     padding-right: 12px;
                     Text { text: root.detail-subtitle; color: Theme.text-dim; }
