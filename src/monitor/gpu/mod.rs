@@ -16,6 +16,9 @@ pub struct GpuInfo {
     pub util_pct: f32,
     pub mem_used: u64,
     pub mem_total: u64,
+    /// Memory is carved out of system RAM (integrated GPU): `mem_total` is
+    /// the shared ceiling, not dedicated VRAM.
+    pub mem_shared: bool,
     pub temp_c: f32,
     pub power_w: f32,
     pub clock_mhz: u32,
@@ -28,6 +31,7 @@ pub struct GpuCollector {
     amd_cards: Vec<(PathBuf, String)>,
     intel_cards: Vec<(PathBuf, String)>,
     intel_fdinfo: Vec<Option<IntelFdinfo>>,
+    ram_total: u64,
 }
 
 impl GpuCollector {
@@ -60,6 +64,7 @@ impl GpuCollector {
             amd_cards,
             intel_cards,
             intel_fdinfo,
+            ram_total: meminfo_total_bytes(),
         }
     }
 
@@ -85,7 +90,7 @@ impl GpuCollector {
             out.push(amd::read(p, name));
         }
         for ((p, name), fdinfo) in self.intel_cards.iter().zip(self.intel_fdinfo.iter_mut()) {
-            out.push(intel::read(p, fdinfo.as_mut(), name));
+            out.push(intel::read(p, fdinfo.as_mut(), name, self.ram_total));
         }
         out
     }
@@ -112,6 +117,19 @@ fn scan_drm() -> (Vec<PathBuf>, Vec<PathBuf>) {
         }
     }
     (amd, intel)
+}
+
+/// Shared-memory ceiling for integrated GPUs, whose buffers live in RAM.
+fn meminfo_total_bytes() -> u64 {
+    let Ok(s) = fs::read_to_string("/proc/meminfo") else {
+        return 0;
+    };
+    s.lines()
+        .find_map(|l| l.strip_prefix("MemTotal:"))
+        .and_then(|v| v.trim().strip_suffix("kB"))
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .map(|kb| kb * 1024)
+        .unwrap_or(0)
 }
 
 fn read_file_u64(p: &PathBuf) -> Option<u64> {

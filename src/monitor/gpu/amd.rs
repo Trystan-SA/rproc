@@ -23,6 +23,7 @@ pub(super) fn read(device: &Path, name: &str) -> GpuInfo {
         util_pct: util,
         mem_used,
         mem_total,
+        mem_shared: false,
         temp_c,
         power_w: 0.0,
         clock_mhz: 0,

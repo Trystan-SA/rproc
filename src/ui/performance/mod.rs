@@ -258,6 +258,8 @@ fn apply_detail(window: &MainWindow, state: &State, snap: &Snapshot, attribution
     let title;
     let mut subtitle = String::new();
     let mut series: Vec<GraphSeries> = Vec::new();
+    let mut vram_series: Vec<GraphSeries> = Vec::new();
+    let mut vram_title = String::new();
     let mut stats: Vec<StatLine> = Vec::new();
     let mut cores: Vec<CoreCell> = Vec::new();
     let mut show_cores = false;
@@ -383,9 +385,16 @@ fn apply_detail(window: &MainWindow, state: &State, snap: &Snapshot, attribution
                     };
                 }
                 let util = snap.history.gpu_util.get(i).unwrap_or(&empty_f32);
-                let mem = snap.history.gpu_mem_pct.get(i).unwrap_or(&empty_f32);
                 series.push(series_f32(util, 100.0, theme::graph_gpu()));
-                series.push(series_f32(mem, 100.0, theme::graph_ram()));
+                if g.mem_total > 0 {
+                    let mem = snap.history.gpu_mem_pct.get(i).unwrap_or(&empty_f32);
+                    vram_series.push(series_f32(mem, 100.0, theme::graph_ram()));
+                    vram_title = if g.mem_shared {
+                        "Memory, shared (last 60s)".into()
+                    } else {
+                        "VRAM (last 60s)".into()
+                    };
+                }
                 let util_label = if g.util_pct.is_nan() {
                     "N/A".to_string()
                 } else {
@@ -394,7 +403,11 @@ fn apply_detail(window: &MainWindow, state: &State, snap: &Snapshot, attribution
                 stats.push(stat("Utilization", &util_label));
                 if g.mem_total > 0 {
                     stats.push(stat(
-                        "VRAM",
+                        if g.mem_shared {
+                            "Memory (shared)"
+                        } else {
+                            "VRAM"
+                        },
                         &format!(
                             "{} / {} ({:.0}%)",
                             format_bytes(g.mem_used),
@@ -424,6 +437,8 @@ fn apply_detail(window: &MainWindow, state: &State, snap: &Snapshot, attribution
     window.set_perf_detail_title(ss(&title));
     window.set_perf_detail_subtitle(ss(&subtitle));
     window.set_perf_detail_series(model(series));
+    window.set_perf_vram_series(model(vram_series));
+    window.set_perf_vram_title(ss(&vram_title));
     window.set_perf_detail_stats(model(stats));
     window.set_perf_detail_cores(model(cores));
     window.set_perf_show_cores(show_cores);
@@ -478,11 +493,14 @@ fn section_refs<'a>(
             }
             None
         }
-        Section::Gpu(i) => snap.gpus.get(i).map(|_| {
+        Section::Gpu(i) => snap.gpus.get(i).map(|g| {
             let util = snap.history.gpu_util.get(i).unwrap_or(empty_f32);
-            let mem = snap.history.gpu_mem_pct.get(i).unwrap_or(empty_f32);
             data.push(("util".into(), SeriesRef::F32(util, true)));
-            data.push(("vram".into(), SeriesRef::F32(mem, true)));
+            if g.mem_total > 0 {
+                let mem = snap.history.gpu_mem_pct.get(i).unwrap_or(empty_f32);
+                let name = if g.mem_shared { "mem" } else { "vram" };
+                data.push((name.into(), SeriesRef::F32(mem, true)));
+            }
             attribution::Kind::Gpu
         }),
     };

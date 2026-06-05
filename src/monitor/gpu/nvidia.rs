@@ -16,6 +16,7 @@ pub(super) fn read(dev: &nvml_wrapper::Device, driver: &str) -> GpuInfo {
         util_pct: util,
         mem_used: mem.as_ref().map(|m| m.used).unwrap_or(0),
         mem_total: mem.map(|m| m.total).unwrap_or(0),
+        mem_shared: false,
         temp_c: temp,
         power_w: power,
         clock_mhz: clock,

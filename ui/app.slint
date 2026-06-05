@@ -38,6 +38,8 @@ export component MainWindow inherits Window {
     in property <string> perf-detail-title;
     in property <string> perf-detail-subtitle;
     in property <[GraphSeries]> perf-detail-series;
+    in property <[GraphSeries]> perf-vram-series;
+    in property <string> perf-vram-title;
     in property <[StatLine]> perf-detail-stats;
     in property <[CoreCell]> perf-detail-cores;
     in property <bool> perf-show-cores;
@@ -205,6 +207,8 @@ export component MainWindow inherits Window {
                     detail-title: root.perf-detail-title;
                     detail-subtitle: root.perf-detail-subtitle;
                     detail-series: root.perf-detail-series;
+                    vram-series: root.perf-vram-series;
+                    vram-title: root.perf-vram-title;
                     detail-stats: root.perf-detail-stats;
                     detail-cores: root.perf-detail-cores;
                     show-cores: root.perf-show-cores;
