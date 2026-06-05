@@ -43,6 +43,11 @@ pub struct Attribution {
     /// [`super::gpu_attribution`] since it needs vendor-specific, stateful
     /// sources; empty when no GPU source is available.
     pub gpu: Vec<ProcShare>,
+    /// Estimated per-process battery drain (W). Linux has no per-process
+    /// energy accounting, so this scales the measured discharge rate by each
+    /// process's CPU share (see [`estimate_battery`]). Empty unless the
+    /// battery was discharging when the sample was taken.
+    pub battery: Vec<ProcShare>,
 }
 
 /// Compute the per-resource top-N directly from an already-refreshed `System`,
@@ -116,7 +121,30 @@ pub fn collect(sys: &System, delta_secs: f64) -> Attribution {
         // Filled by the caller via gpu_attribution::sample — needs stateful,
         // vendor-specific sources this sysinfo-only pass doesn't have.
         gpu: Vec::new(),
+        // Filled by the caller via estimate_battery — needs the measured
+        // discharge rate this sysinfo-only pass doesn't have.
+        battery: Vec::new(),
     }
+}
+
+/// Estimate per-process battery drain by scaling the measured discharge rate
+/// by each process's CPU share. A deliberate approximation: it spreads the
+/// whole system draw (display, radios, idle floor) proportionally to CPU
+/// activity, the same heuristic Windows' task manager uses. The CPU list is
+/// already top-N sorted, and watts scale monotonically with CPU share, so the
+/// ranking carries over as-is.
+pub fn estimate_battery(cpu: &[ProcShare], drain_w: f32) -> Vec<ProcShare> {
+    if drain_w <= 0.0 {
+        return Vec::new();
+    }
+    cpu.iter()
+        .map(|s| ProcShare {
+            pid: s.pid,
+            name: s.name.clone(),
+            value: drain_w * s.value / 100.0,
+            bytes: 0,
+        })
+        .collect()
 }
 
 /// Keep the `TOP_N` highest-value shares, descending. Every process is a
@@ -167,6 +195,16 @@ mod tests {
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].value, 8.0);
         assert_eq!(out[1].value, 2.0);
+    }
+
+    #[test]
+    fn estimate_battery_scales_cpu_shares_by_drain() {
+        let cpu = vec![share(1, 50.0), share(2, 10.0)];
+        let out = estimate_battery(&cpu, 8.0);
+        assert_eq!(out.len(), 2);
+        assert!((out[0].value - 4.0).abs() < 1e-6);
+        assert!((out[1].value - 0.8).abs() < 1e-6);
+        assert!(estimate_battery(&cpu, 0.0).is_empty());
     }
 
     #[test]

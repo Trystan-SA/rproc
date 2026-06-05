@@ -45,6 +45,8 @@ pub struct History {
     pub gpu_util: Vec<VecDeque<f32>>,
     pub gpu_mem_pct: Vec<VecDeque<f32>>,
     pub battery_pct: VecDeque<f32>,
+    /// Battery charge/discharge rate in W (0 when the driver reports none).
+    pub battery_power_w: VecDeque<f32>,
     /// Optional per-sample top-N process attribution, aligned with the other
     /// series (newest on the right). Empty unless the attribution feature is
     /// enabled; never persisted to disk. See [`super::attribution`].
@@ -243,6 +245,14 @@ fn sampler_loop(
 
         let summary = system::SystemSummary::collect(&sys, &nets, &disks, &components, delta_secs);
         let battery = battery::collect();
+        // Per-process drain is an estimate (CPU share × measured discharge);
+        // only meaningful while actually discharging.
+        if want_attr
+            && let Some(b) = &battery
+            && b.status == battery::Status::Discharging
+        {
+            attribution.battery = attribution::estimate_battery(&attribution.cpu, b.power_w);
+        }
         let gpus = if want_gpu {
             gpu_collector
                 .as_mut()
@@ -345,12 +355,18 @@ fn sampler_loop(
         }
 
         match &battery {
-            Some(b) => push_capped(
-                &mut working.history.battery_pct,
-                b.capacity_pct,
-                HISTORY_LEN,
-            ),
-            None => working.history.battery_pct.clear(),
+            Some(b) => {
+                push_capped(
+                    &mut working.history.battery_pct,
+                    b.capacity_pct,
+                    HISTORY_LEN,
+                );
+                push_capped(&mut working.history.battery_power_w, b.power_w, HISTORY_LEN);
+            }
+            None => {
+                working.history.battery_pct.clear();
+                working.history.battery_power_w.clear();
+            }
         }
 
         if want_attr {

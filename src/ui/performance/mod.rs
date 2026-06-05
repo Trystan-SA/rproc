@@ -466,6 +466,12 @@ fn apply_detail(window: &MainWindow, state: &State, snap: &Snapshot, attribution
                     100.0,
                     theme::graph_battery(),
                 ));
+                let power = &snap.history.battery_power_w;
+                if power.iter().any(|v| *v > 0.0) {
+                    let max = widgets::max_in(power.iter().map(|v| *v as f64)).max(1.0);
+                    vram_series.push(series_f32(power, max as f32, theme::graph_net()));
+                    vram_title = "Power (last 60s)".into();
+                }
                 stats.push(stat("Charge", &format!("{:.0}%", b.capacity_pct)));
                 let status = if b.ac_online && b.status != battery::Status::Charging {
                     format!("{} (AC connected)", b.status.label())
@@ -538,14 +544,11 @@ fn section_refs<'a>(
     let mut data: Vec<(String, SeriesRef<'a>)> = Vec::new();
     let kind = match section {
         Section::Cpu => {
-            data.push((String::new(), SeriesRef::F32(&snap.history.cpu_total, true)));
+            data.push((String::new(), SeriesRef::Pct(&snap.history.cpu_total)));
             Some(attribution::Kind::Cpu)
         }
         Section::Memory => {
-            data.push((
-                String::new(),
-                SeriesRef::F32(&snap.history.ram_used_pct, true),
-            ));
+            data.push((String::new(), SeriesRef::Pct(&snap.history.ram_used_pct)));
             Some(attribution::Kind::Ram)
         }
         Section::Disk(i) => snap.system.disks.get(i).map(|d| {
@@ -555,35 +558,36 @@ fn section_refs<'a>(
                 .disk_write_bps
                 .get(&d.name)
                 .unwrap_or(empty_f64);
-            data.push(("read".into(), SeriesRef::F64(r)));
-            data.push(("write".into(), SeriesRef::F64(w)));
+            data.push(("read".into(), SeriesRef::Bps(r)));
+            data.push(("write".into(), SeriesRef::Bps(w)));
             attribution::Kind::Disk
         }),
         Section::Network(i) => {
             if let Some(n) = snap.system.nets.get(i) {
                 let rx = snap.history.net_rx_bps.get(&n.name).unwrap_or(empty_f64);
                 let tx = snap.history.net_tx_bps.get(&n.name).unwrap_or(empty_f64);
-                data.push(("rx".into(), SeriesRef::F64(rx)));
-                data.push(("tx".into(), SeriesRef::F64(tx)));
+                data.push(("rx".into(), SeriesRef::Bps(rx)));
+                data.push(("tx".into(), SeriesRef::Bps(tx)));
             }
             None
         }
         Section::Gpu(i) => snap.gpus.get(i).map(|g| {
             let util = snap.history.gpu_util.get(i).unwrap_or(empty_f32);
-            data.push(("util".into(), SeriesRef::F32(util, true)));
+            data.push(("util".into(), SeriesRef::Pct(util)));
             if g.mem_total > 0 {
                 let mem = snap.history.gpu_mem_pct.get(i).unwrap_or(empty_f32);
                 let name = if g.mem_shared { "mem" } else { "vram" };
-                data.push((name.into(), SeriesRef::F32(mem, true)));
+                data.push((name.into(), SeriesRef::Pct(mem)));
             }
             attribution::Kind::Gpu
         }),
         Section::Battery => {
+            data.push((String::new(), SeriesRef::Pct(&snap.history.battery_pct)));
             data.push((
-                String::new(),
-                SeriesRef::F32(&snap.history.battery_pct, true),
+                "power".into(),
+                SeriesRef::Watts(&snap.history.battery_power_w),
             ));
-            None
+            Some(attribution::Kind::Battery)
         }
     };
     (data, kind)
@@ -655,19 +659,23 @@ pub fn apply_hover(window: &MainWindow, state: &State, snap: &Snapshot, attribut
 }
 
 /// Borrowed series used only to compute the hover readout value at a plot-x.
+/// The variant picks the unit the value is formatted with.
 enum SeriesRef<'a> {
-    /// f32 percentage series; the bool marks it as a percentage for formatting.
-    F32(&'a VecDeque<f32>, bool),
-    F64(&'a VecDeque<f64>),
+    Pct(&'a VecDeque<f32>),
+    Watts(&'a VecDeque<f32>),
+    Bps(&'a VecDeque<f64>),
 }
 
 impl SeriesRef<'_> {
     fn value_at(&self, snapped_x: f64) -> Option<String> {
         match self {
-            SeriesRef::F32(d, _) => widgets::sample_for_plot_x(snapped_x, d.len())
+            SeriesRef::Pct(d) => widgets::sample_for_plot_x(snapped_x, d.len())
                 .and_then(|i| d.get(i))
                 .map(|v| format_pct_value(*v as f64)),
-            SeriesRef::F64(d) => widgets::sample_for_plot_x(snapped_x, d.len())
+            SeriesRef::Watts(d) => widgets::sample_for_plot_x(snapped_x, d.len())
+                .and_then(|i| d.get(i))
+                .map(|v| format!("{v:.1} W")),
+            SeriesRef::Bps(d) => widgets::sample_for_plot_x(snapped_x, d.len())
                 .and_then(|i| d.get(i))
                 .map(|v| widgets::format_bps(*v)),
         }

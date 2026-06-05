@@ -13,6 +13,7 @@ pub enum Kind {
     Ram,
     Disk,
     Gpu,
+    Battery,
 }
 
 /// The shares for `kind` at the sample the pointer is hovering, or `None` when
@@ -30,6 +31,7 @@ pub fn shares_at(
             Kind::Ram => &a.ram,
             Kind::Disk => &a.disk,
             Kind::Gpu => &a.gpu,
+            Kind::Battery => &a.battery,
         })
 }
 
@@ -38,6 +40,16 @@ pub fn format_value(kind: Kind, s: &ProcShare) -> String {
         Kind::Cpu | Kind::Gpu => fmt_pct(s.value),
         Kind::Ram => format!("{} ({})", widgets::format_bytes(s.bytes), fmt_pct(s.value)),
         Kind::Disk => widgets::format_bps(s.value as f64),
+        // "~" flags the value as an estimate (CPU share × measured discharge).
+        Kind::Battery => format!("~{} W", fmt_watts(s.value)),
+    }
+}
+
+fn fmt_watts(v: f32) -> String {
+    if v < 1.0 {
+        format!("{v:.2}")
+    } else {
+        format!("{v:.1}")
     }
 }
 

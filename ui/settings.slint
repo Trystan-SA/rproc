@@ -88,7 +88,7 @@ export component Settings inherits ScrollView {
                 spacing: 8px;
                 Text { text: "Per-process graph attribution"; font-weight: 700; font-size: 15px; color: Theme.text; }
                 Text {
-                    text: "Record the heaviest processes behind each point on the CPU, memory, disk and GPU graphs. When on, hover any point to see the top processes. This makes the sampler scan the full process list every tick, so it's off by default.";
+                    text: "Record the heaviest processes behind each point on the CPU, memory, disk, GPU and battery graphs. When on, hover any point to see the top processes (battery drain is estimated from each process's CPU share). This makes the sampler scan the full process list every tick, so it's off by default.";
                     color: Theme.text-dim; font-size: 11px; wrap: word-wrap;
                 }
                 Check {
