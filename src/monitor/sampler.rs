@@ -45,7 +45,8 @@ pub struct History {
     pub gpu_util: Vec<VecDeque<f32>>,
     pub gpu_mem_pct: Vec<VecDeque<f32>>,
     pub battery_pct: VecDeque<f32>,
-    /// Battery charge/discharge rate in W (0 when the driver reports none).
+    /// Battery rate in W, signed: positive while discharging, negative while
+    /// charging (0 when the driver reports none).
     pub battery_power_w: VecDeque<f32>,
     /// Optional per-sample top-N process attribution, aligned with the other
     /// series (newest on the right). Empty unless the attribution feature is
@@ -361,7 +362,14 @@ fn sampler_loop(
                     b.capacity_pct,
                     HISTORY_LEN,
                 );
-                push_capped(&mut working.history.battery_power_w, b.power_w, HISTORY_LEN);
+                // Signed so each historical sample keeps its direction: the UI
+                // colors discharge and charge segments differently.
+                let signed = if b.status == battery::Status::Discharging {
+                    b.power_w
+                } else {
+                    -b.power_w
+                };
+                push_capped(&mut working.history.battery_power_w, signed, HISTORY_LEN);
             }
             None => {
                 working.history.battery_pct.clear();

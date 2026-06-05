@@ -188,17 +188,28 @@ fn build_cards(state: &State, snap: &Snapshot) -> Vec<CardData> {
 
     if let Some(b) = &snap.battery {
         // The sparkline tracks power draw, not charge level — over 60 s the
-        // level is a flat line; the draw is where the activity shows.
-        let power = &snap.history.battery_power_w;
-        let max = widgets::max_in(power.iter().map(|v| *v as f64)).max(1.0) as f32;
+        // level is a flat line; the draw is where the activity shows. Orange
+        // while discharging, green otherwise, matching the detail graph.
+        let abs: VecDeque<f32> = snap
+            .history
+            .battery_power_w
+            .iter()
+            .map(|v| v.abs())
+            .collect();
+        let max = widgets::max_in(abs.iter().map(|v| *v as f64)).max(1.0) as f32;
+        let color = if b.status == battery::Status::Discharging {
+            theme::graph_battery_drain()
+        } else {
+            theme::graph_battery()
+        };
         out.push(CardData {
             id: ss("battery"),
             title: ss("Battery"),
             subtitle: ss(b.status.label()),
             value: ss(&format!("{:.0}%", b.capacity_pct)),
             temp: ss(""),
-            color: theme::graph_battery(),
-            values: graph::norm_f32(power, max),
+            color,
+            values: graph::norm_f32(&abs, max),
             selected: state.section == Section::Battery,
         });
     }
@@ -465,9 +476,14 @@ fn apply_detail(window: &MainWindow, state: &State, snap: &Snapshot, attribution
                 }
                 subtitle = parts.join(" · ");
                 graph_title = "Power (last 60s)";
+                // Split the signed series so discharge (orange) and charge
+                // (green) segments keep their color through the history.
                 let power = &snap.history.battery_power_w;
-                let max = widgets::max_in(power.iter().map(|v| *v as f64)).max(1.0);
-                series.push(series_f32(power, max as f32, theme::graph_battery()));
+                let max = widgets::max_in(power.iter().map(|v| v.abs() as f64)).max(1.0) as f32;
+                let drain: VecDeque<f32> = power.iter().map(|v| v.max(0.0)).collect();
+                let gain: VecDeque<f32> = power.iter().map(|v| (-v).max(0.0)).collect();
+                series.push(series_f32(&drain, max, theme::graph_battery_drain()));
+                series.push(series_f32(&gain, max, theme::graph_battery()));
                 stats.push(stat("Charge", &format!("{:.0}%", b.capacity_pct)));
                 let status = if b.ac_online && b.status != battery::Status::Charging {
                     format!("{} (AC connected)", b.status.label())
@@ -668,9 +684,16 @@ impl SeriesRef<'_> {
             SeriesRef::Pct(d) => widgets::sample_for_plot_x(snapped_x, d.len())
                 .and_then(|i| d.get(i))
                 .map(|v| format_pct_value(*v as f64)),
+            // Signed watts (see History::battery_power_w): negative = charging.
             SeriesRef::Watts(d) => widgets::sample_for_plot_x(snapped_x, d.len())
                 .and_then(|i| d.get(i))
-                .map(|v| format!("{v:.1} W")),
+                .map(|v| {
+                    if *v < 0.0 {
+                        format!("{:.1} W charging", -v)
+                    } else {
+                        format!("{v:.1} W")
+                    }
+                }),
             SeriesRef::Bps(d) => widgets::sample_for_plot_x(snapped_x, d.len())
                 .and_then(|i| d.get(i))
                 .map(|v| widgets::format_bps(*v)),

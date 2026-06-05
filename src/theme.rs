@@ -41,3 +41,6 @@ pub fn graph_gpu() -> Color {
 pub fn graph_battery() -> Color {
     Color::from_rgb_u8(0x8B, 0xE0, 0x4E)
 }
+pub fn graph_battery_drain() -> Color {
+    Color::from_rgb_u8(0xFF, 0xA9, 0x4D)
+}
