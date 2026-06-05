@@ -190,13 +190,20 @@ fn build_cards(state: &State, snap: &Snapshot) -> Vec<CardData> {
         // The sparkline tracks power draw, not charge level — over 60 s the
         // level is a flat line; the draw is where the activity shows. Orange
         // while discharging, green otherwise, matching the detail graph.
-        let abs: VecDeque<f32> = snap
-            .history
-            .battery_power_w
-            .iter()
-            .map(|v| v.abs())
-            .collect();
-        let max = widgets::max_in(abs.iter().map(|v| *v as f64)).max(1.0) as f32;
+        // A full battery draws ~0 W, which would read as an *empty* graph —
+        // show the (full) charge level instead.
+        let values = if b.status == battery::Status::Full {
+            graph::norm_f32(&snap.history.battery_pct, 100.0)
+        } else {
+            let abs: VecDeque<f32> = snap
+                .history
+                .battery_power_w
+                .iter()
+                .map(|v| v.abs())
+                .collect();
+            let max = widgets::max_in(abs.iter().map(|v| *v as f64)).max(1.0) as f32;
+            graph::norm_f32(&abs, max)
+        };
         let color = if b.status == battery::Status::Discharging {
             theme::graph_battery_drain()
         } else {
@@ -209,7 +216,7 @@ fn build_cards(state: &State, snap: &Snapshot) -> Vec<CardData> {
             value: ss(&format!("{:.0}%", b.capacity_pct)),
             temp: ss(""),
             color,
-            values: graph::norm_f32(&abs, max),
+            values,
             selected: state.section == Section::Battery,
         });
     }
@@ -475,15 +482,26 @@ fn apply_detail(window: &MainWindow, state: &State, snap: &Snapshot, attribution
                     parts.push(&b.technology);
                 }
                 subtitle = parts.join(" · ");
-                graph_title = "Power (last 60s)";
-                // Split the signed series so discharge (orange) and charge
-                // (green) segments keep their color through the history.
-                let power = &snap.history.battery_power_w;
-                let max = widgets::max_in(power.iter().map(|v| v.abs() as f64)).max(1.0) as f32;
-                let drain: VecDeque<f32> = power.iter().map(|v| v.max(0.0)).collect();
-                let gain: VecDeque<f32> = power.iter().map(|v| (-v).max(0.0)).collect();
-                series.push(series_f32(&drain, max, theme::graph_battery_drain()));
-                series.push(series_f32(&gain, max, theme::graph_battery()));
+                if b.status == battery::Status::Full {
+                    // ~0 W when full would read as an empty graph; plot the
+                    // (full) charge level instead.
+                    graph_title = "Charge (last 60s)";
+                    series.push(series_f32(
+                        &snap.history.battery_pct,
+                        100.0,
+                        theme::graph_battery(),
+                    ));
+                } else {
+                    graph_title = "Power (last 60s)";
+                    // Split the signed series so discharge (orange) and charge
+                    // (green) segments keep their color through the history.
+                    let power = &snap.history.battery_power_w;
+                    let max = widgets::max_in(power.iter().map(|v| v.abs() as f64)).max(1.0) as f32;
+                    let drain: VecDeque<f32> = power.iter().map(|v| v.max(0.0)).collect();
+                    let gain: VecDeque<f32> = power.iter().map(|v| (-v).max(0.0)).collect();
+                    series.push(series_f32(&drain, max, theme::graph_battery_drain()));
+                    series.push(series_f32(&gain, max, theme::graph_battery()));
+                }
                 stats.push(stat("Charge", &format!("{:.0}%", b.capacity_pct)));
                 let status = if b.ac_online && b.status != battery::Status::Charging {
                     format!("{} (AC connected)", b.status.label())
@@ -594,11 +612,25 @@ fn section_refs<'a>(
             attribution::Kind::Gpu
         }),
         Section::Battery => {
-            data.push((
-                String::new(),
-                SeriesRef::Watts(&snap.history.battery_power_w),
-            ));
-            data.push(("charge".into(), SeriesRef::Pct(&snap.history.battery_pct)));
+            // Mirror the plotted series: charge level leads when full,
+            // power draw otherwise.
+            if snap
+                .battery
+                .as_ref()
+                .is_some_and(|b| b.status == battery::Status::Full)
+            {
+                data.push((String::new(), SeriesRef::Pct(&snap.history.battery_pct)));
+                data.push((
+                    "power".into(),
+                    SeriesRef::Watts(&snap.history.battery_power_w),
+                ));
+            } else {
+                data.push((
+                    String::new(),
+                    SeriesRef::Watts(&snap.history.battery_power_w),
+                ));
+                data.push(("charge".into(), SeriesRef::Pct(&snap.history.battery_pct)));
+            }
             Some(attribution::Kind::Battery)
         }
     };
