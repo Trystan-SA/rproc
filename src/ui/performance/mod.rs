@@ -4,6 +4,7 @@ use std::rc::Rc;
 use slint::{ModelRc, SharedString, VecModel};
 
 use crate::monitor::Snapshot;
+use crate::monitor::battery;
 use crate::theme;
 use crate::ui::widgets::{
     self, HISTORY_LEN, format_bytes, format_duration, format_pct_value, format_time_ago,
@@ -23,6 +24,7 @@ pub enum Section {
     Disk(usize),
     Network(usize),
     Gpu(usize),
+    Battery,
 }
 
 pub struct State {
@@ -51,6 +53,7 @@ impl State {
         self.section = match id {
             "cpu" => Section::Cpu,
             "mem" => Section::Memory,
+            "battery" => Section::Battery,
             _ => {
                 if let Some(n) = id.strip_prefix("gpu") {
                     Section::Gpu(n.parse().unwrap_or(0))
@@ -183,6 +186,19 @@ fn build_cards(state: &State, snap: &Snapshot) -> Vec<CardData> {
         ));
     }
 
+    if let Some(b) = &snap.battery {
+        out.push(card_pct(
+            "battery",
+            "Battery",
+            b.status.label(),
+            b.capacity_pct,
+            0.0,
+            &snap.history.battery_pct,
+            theme::graph_battery(),
+            state.section == Section::Battery,
+        ));
+    }
+
     out
 }
 
@@ -257,6 +273,7 @@ fn apply_detail(window: &MainWindow, state: &State, snap: &Snapshot, attribution
 
     let title;
     let mut subtitle = String::new();
+    let mut graph_title = "Usage (last 60s)";
     let mut series: Vec<GraphSeries> = Vec::new();
     let mut vram_series: Vec<GraphSeries> = Vec::new();
     let mut vram_title = String::new();
@@ -432,10 +449,68 @@ fn apply_detail(window: &MainWindow, state: &State, snap: &Snapshot, attribution
                 title = "No GPU".into();
             }
         }
+        Section::Battery => {
+            if let Some(b) = &snap.battery {
+                title = "Battery".into();
+                let mut parts: Vec<&str> = Vec::new();
+                if !b.model.is_empty() {
+                    parts.push(&b.model);
+                }
+                if !b.technology.is_empty() {
+                    parts.push(&b.technology);
+                }
+                subtitle = parts.join(" · ");
+                graph_title = "Charge (last 60s)";
+                series.push(series_f32(
+                    &snap.history.battery_pct,
+                    100.0,
+                    theme::graph_battery(),
+                ));
+                stats.push(stat("Charge", &format!("{:.0}%", b.capacity_pct)));
+                let status = if b.ac_online && b.status != battery::Status::Charging {
+                    format!("{} (AC connected)", b.status.label())
+                } else {
+                    b.status.label().to_string()
+                };
+                stats.push(stat("Status", &status));
+                if b.power_w > 0.05 {
+                    stats.push(stat("Power", &format!("{:.1} W", b.power_w)));
+                }
+                if let Some(secs) = b.time_left_secs() {
+                    let label = if b.status == battery::Status::Charging {
+                        "Time to full"
+                    } else {
+                        "Time remaining"
+                    };
+                    stats.push(stat(label, &format_duration(secs)));
+                }
+                if b.energy_full_wh > 0.0 || b.health_pct().is_some() || b.cycle_count > 0 {
+                    stats.push(separator());
+                }
+                if b.energy_full_wh > 0.0 {
+                    stats.push(stat(
+                        "Energy",
+                        &format!("{:.1} / {:.1} Wh", b.energy_now_wh, b.energy_full_wh),
+                    ));
+                }
+                if let Some(h) = b.health_pct() {
+                    stats.push(stat(
+                        "Health",
+                        &format!("{:.0}% of {:.1} Wh design", h, b.energy_full_design_wh),
+                    ));
+                }
+                if b.cycle_count > 0 {
+                    stats.push(stat("Cycle count", &b.cycle_count.to_string()));
+                }
+            } else {
+                title = "No battery".into();
+            }
+        }
     }
 
     window.set_perf_detail_title(ss(&title));
     window.set_perf_detail_subtitle(ss(&subtitle));
+    window.set_perf_graph_title(ss(graph_title));
     window.set_perf_detail_series(model(series));
     window.set_perf_vram_series(model(vram_series));
     window.set_perf_vram_title(ss(&vram_title));
@@ -503,6 +578,13 @@ fn section_refs<'a>(
             }
             attribution::Kind::Gpu
         }),
+        Section::Battery => {
+            data.push((
+                String::new(),
+                SeriesRef::F32(&snap.history.battery_pct, true),
+            ));
+            None
+        }
     };
     (data, kind)
 }

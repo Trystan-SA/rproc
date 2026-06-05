@@ -1,4 +1,5 @@
 pub mod attribution;
+pub mod battery;
 pub mod gpu;
 pub mod gpu_attribution;
 pub mod processes;

@@ -37,6 +37,7 @@ export component MainWindow inherits Window {
     in-out property <bool> perf-detail-collapsed;
     in property <string> perf-detail-title;
     in property <string> perf-detail-subtitle;
+    in property <string> perf-graph-title;
     in property <[GraphSeries]> perf-detail-series;
     in property <[GraphSeries]> perf-vram-series;
     in property <string> perf-vram-title;
@@ -206,6 +207,7 @@ export component MainWindow inherits Window {
                     detail-collapsed <=> root.perf-detail-collapsed;
                     detail-title: root.perf-detail-title;
                     detail-subtitle: root.perf-detail-subtitle;
+                    graph-title: root.perf-graph-title;
                     detail-series: root.perf-detail-series;
                     vram-series: root.perf-vram-series;
                     vram-title: root.perf-vram-title;

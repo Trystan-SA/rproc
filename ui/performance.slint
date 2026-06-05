@@ -34,6 +34,7 @@ export component Performance inherits Rectangle {
     in-out property <bool> detail-collapsed;
     in property <string> detail-title;
     in property <string> detail-subtitle;
+    in property <string> graph-title;
     in property <[GraphSeries]> detail-series;
     in property <[GraphSeries]> vram-series;
     in property <string> vram-title;
@@ -162,7 +163,7 @@ export component Performance inherits Rectangle {
                     Card {
                         VerticalLayout {
                             padding: 12px; spacing: 6px;
-                            Text { text: "Usage (last 60s)"; color: Theme.text; }
+                            Text { text: root.graph-title; color: Theme.text; }
                             graph-box := Rectangle {
                                 height: 180px;
                                 Graph { series: root.detail-series; width: 100%; height: 100%; }

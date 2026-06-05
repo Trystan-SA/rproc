@@ -9,7 +9,7 @@ use sysinfo::{
     Users,
 };
 
-use super::{attribution, gpu, gpu_attribution, processes, system};
+use super::{attribution, battery, gpu, gpu_attribution, processes, system};
 use crate::settings::{MAX_REFRESH_MS, MIN_REFRESH_MS};
 
 const HISTORY_LEN: usize = 60;
@@ -26,6 +26,8 @@ pub struct Snapshot {
     pub history: History,
     pub processes: Arc<Vec<processes::ProcInfo>>,
     pub gpus: Vec<gpu::GpuInfo>,
+    /// `None` on battery-less machines (the Performance tab then has no card).
+    pub battery: Option<battery::BatteryInfo>,
 }
 
 #[derive(Clone, Default)]
@@ -42,6 +44,7 @@ pub struct History {
     pub disk_write_bps: HashMap<String, VecDeque<f64>>,
     pub gpu_util: Vec<VecDeque<f32>>,
     pub gpu_mem_pct: Vec<VecDeque<f32>>,
+    pub battery_pct: VecDeque<f32>,
     /// Optional per-sample top-N process attribution, aligned with the other
     /// series (newest on the right). Empty unless the attribution feature is
     /// enabled; never persisted to disk. See [`super::attribution`].
@@ -239,6 +242,7 @@ fn sampler_loop(
         components.refresh(true);
 
         let summary = system::SystemSummary::collect(&sys, &nets, &disks, &components, delta_secs);
+        let battery = battery::collect();
         let gpus = if want_gpu {
             gpu_collector
                 .as_mut()
@@ -340,6 +344,15 @@ fn sampler_loop(
             }
         }
 
+        match &battery {
+            Some(b) => push_capped(
+                &mut working.history.battery_pct,
+                b.capacity_pct,
+                HISTORY_LEN,
+            ),
+            None => working.history.battery_pct.clear(),
+        }
+
         if want_attr {
             push_capped(&mut working.history.attribution, attribution, HISTORY_LEN);
         } else if !working.history.attribution.is_empty() {
@@ -350,6 +363,7 @@ fn sampler_loop(
 
         working.system = summary;
         working.gpus = gpus;
+        working.battery = battery;
         working.ready = true;
         // Surface the *current* sampling period so plot widgets can label
         // their X axis correctly. Read before the sleep so it reflects the

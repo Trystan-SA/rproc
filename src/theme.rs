@@ -38,3 +38,6 @@ pub fn graph_net() -> Color {
 pub fn graph_gpu() -> Color {
     Color::from_rgb_u8(0xFF, 0x5C, 0x8A)
 }
+pub fn graph_battery() -> Color {
+    Color::from_rgb_u8(0x8B, 0xE0, 0x4E)
+}
