@@ -187,16 +187,20 @@ fn build_cards(state: &State, snap: &Snapshot) -> Vec<CardData> {
     }
 
     if let Some(b) = &snap.battery {
-        out.push(card_pct(
-            "battery",
-            "Battery",
-            b.status.label(),
-            b.capacity_pct,
-            0.0,
-            &snap.history.battery_pct,
-            theme::graph_battery(),
-            state.section == Section::Battery,
-        ));
+        // The sparkline tracks power draw, not charge level — over 60 s the
+        // level is a flat line; the draw is where the activity shows.
+        let power = &snap.history.battery_power_w;
+        let max = widgets::max_in(power.iter().map(|v| *v as f64)).max(1.0) as f32;
+        out.push(CardData {
+            id: ss("battery"),
+            title: ss("Battery"),
+            subtitle: ss(b.status.label()),
+            value: ss(&format!("{:.0}%", b.capacity_pct)),
+            temp: ss(""),
+            color: theme::graph_battery(),
+            values: graph::norm_f32(power, max),
+            selected: state.section == Section::Battery,
+        });
     }
 
     out
@@ -460,18 +464,10 @@ fn apply_detail(window: &MainWindow, state: &State, snap: &Snapshot, attribution
                     parts.push(&b.technology);
                 }
                 subtitle = parts.join(" · ");
-                graph_title = "Charge (last 60s)";
-                series.push(series_f32(
-                    &snap.history.battery_pct,
-                    100.0,
-                    theme::graph_battery(),
-                ));
+                graph_title = "Power (last 60s)";
                 let power = &snap.history.battery_power_w;
-                if power.iter().any(|v| *v > 0.0) {
-                    let max = widgets::max_in(power.iter().map(|v| *v as f64)).max(1.0);
-                    vram_series.push(series_f32(power, max as f32, theme::graph_net()));
-                    vram_title = "Power (last 60s)".into();
-                }
+                let max = widgets::max_in(power.iter().map(|v| *v as f64)).max(1.0);
+                series.push(series_f32(power, max as f32, theme::graph_battery()));
                 stats.push(stat("Charge", &format!("{:.0}%", b.capacity_pct)));
                 let status = if b.ac_online && b.status != battery::Status::Charging {
                     format!("{} (AC connected)", b.status.label())
@@ -582,11 +578,11 @@ fn section_refs<'a>(
             attribution::Kind::Gpu
         }),
         Section::Battery => {
-            data.push((String::new(), SeriesRef::Pct(&snap.history.battery_pct)));
             data.push((
-                "power".into(),
+                String::new(),
                 SeriesRef::Watts(&snap.history.battery_power_w),
             ));
+            data.push(("charge".into(), SeriesRef::Pct(&snap.history.battery_pct)));
             Some(attribution::Kind::Battery)
         }
     };
