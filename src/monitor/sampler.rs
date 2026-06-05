@@ -60,6 +60,9 @@ pub struct Sampler {
     // PIDs) is only built while it's actually on screen — the app opens on the
     // Performance tab, so at startup this table is never collected at all.
     processes_active: Arc<AtomicBool>,
+    // User-requested pause: the loop stops collecting and publishing so the
+    // last snapshot stays frozen for inspection.
+    paused: Arc<AtomicBool>,
 }
 
 impl Sampler {
@@ -85,8 +88,11 @@ impl Sampler {
         }
         let inner = Arc::new(Mutex::new(Arc::new(initial)));
 
+        let paused = Arc::new(AtomicBool::new(false));
+
         let inner_t = inner.clone();
         let active_t = processes_active.clone();
+        let paused_t = paused.clone();
         thread::Builder::new()
             .name("rproc-sampler".into())
             .spawn(move || {
@@ -96,12 +102,14 @@ impl Sampler {
                     active_t,
                     attribution_enabled,
                     gpu_enabled,
+                    paused_t,
                 )
             })
             .expect("spawn sampler");
         Self {
             inner,
             processes_active,
+            paused,
         }
     }
 
@@ -115,6 +123,12 @@ impl Sampler {
     pub fn set_processes_active(&self, on: bool) {
         self.processes_active.store(on, Ordering::Relaxed);
     }
+
+    /// Freeze or resume sampling. While paused the loop sleeps without
+    /// collecting or publishing, so the last snapshot stays untouched.
+    pub fn set_paused(&self, on: bool) {
+        self.paused.store(on, Ordering::Relaxed);
+    }
 }
 
 fn sampler_loop(
@@ -123,6 +137,7 @@ fn sampler_loop(
     processes_active: Arc<AtomicBool>,
     attribution_enabled: Arc<AtomicBool>,
     gpu_enabled: Arc<AtomicBool>,
+    paused: Arc<AtomicBool>,
 ) {
     // `System::new()` + a CPU refresh avoids `new_all()`'s upfront scan of
     // every PID's cmdline/exe/environ. The loop below repopulates the process
@@ -159,6 +174,13 @@ fn sampler_loop(
     let mut last_refresh = Instant::now();
 
     loop {
+        // Paused: idle in short slices so resuming feels instant. The first
+        // sample after resume spans the whole pause (delta_secs includes it),
+        // so rate counters come out as a correct average rather than a spike.
+        while paused.load(Ordering::Relaxed) {
+            thread::sleep(Duration::from_millis(40));
+        }
+
         let now = Instant::now();
         let delta_secs = now.duration_since(last_refresh).as_secs_f64();
         last_refresh = now;

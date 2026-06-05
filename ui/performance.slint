@@ -30,6 +30,7 @@ component PerfCard inherits Card {
 
 export component Performance inherits Rectangle {
     in property <[CardData]> cards;
+    in property <bool> paused;
     in-out property <bool> detail-collapsed;
     in property <string> detail-title;
     in property <string> detail-subtitle;
@@ -47,6 +48,7 @@ export component Performance inherits Rectangle {
 
     callback select(string);
     callback toggle-detail();
+    callback toggle-pause();
     callback hovered(float);
     callback hover-cleared();
 
@@ -73,6 +75,44 @@ export component Performance inherits Rectangle {
                         Text { text: "‹"; color: Theme.text; horizontal-alignment: center; vertical-alignment: center; font-size: 16px; }
                         expand-ta := TouchArea { mouse-cursor: pointer; clicked => { root.detail-collapsed = false; root.toggle-detail(); } }
                     }
+                }
+                // Pause/resume sampling so a moment can be inspected. Sits above
+                // the CPU card; the warn tint makes the frozen state obvious.
+                pause-btn := Rectangle {
+                    property <color> fg: root.paused ? Theme.warn : Theme.text;
+                    height: 30px;
+                    border-radius: 6px;
+                    background: root.paused ? Theme.warn.with-alpha(0.15)
+                        : (pause-ta.has-hover ? Theme.active-bg : Theme.panel-bg);
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: 6px;
+                        VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 14px;
+                                height: 14px;
+                                // Pause — two vertical bars.
+                                if !root.paused: Rectangle {
+                                    Rectangle { x: 3px; y: 1.5px; width: 2.6px; height: 11px; background: pause-btn.fg; }
+                                    Rectangle { x: 8.4px; y: 1.5px; width: 2.6px; height: 11px; background: pause-btn.fg; }
+                                }
+                                // Resume — play triangle.
+                                if root.paused: Path {
+                                    fill: pause-btn.fg;
+                                    viewbox-width: 14; viewbox-height: 14; width: 100%; height: 100%;
+                                    MoveTo { x: 4; y: 1.5; } LineTo { x: 12; y: 7; } LineTo { x: 4; y: 12.5; } Close { }
+                                }
+                            }
+                        }
+                        Text {
+                            text: root.paused ? "Resume" : "Pause";
+                            color: pause-btn.fg;
+                            vertical-alignment: center;
+                            font-size: 12px;
+                        }
+                    }
+                    pause-ta := TouchArea { mouse-cursor: pointer; clicked => { root.toggle-pause(); } }
                 }
                 for c in root.cards: PerfCard { data: c; clicked => { root.select(c.id); } }
                 Rectangle { height: 4px; }

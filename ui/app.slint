@@ -28,6 +28,10 @@ export component MainWindow inherits Window {
     in-out property <int> tab: 1;
     callback select-tab(int);
 
+    // --- Pause (freezes sampling so a moment can be inspected) ---
+    in-out property <bool> paused;
+    callback toggle-pause();
+
     // --- Performance ---
     in property <[CardData]> perf-cards;
     in-out property <bool> perf-detail-collapsed;
@@ -196,6 +200,7 @@ export component MainWindow inherits Window {
 
                 if root.tab == 1: Performance {
                     cards: root.perf-cards;
+                    paused: root.paused;
                     detail-collapsed <=> root.perf-detail-collapsed;
                     detail-title: root.perf-detail-title;
                     detail-subtitle: root.perf-detail-subtitle;
@@ -212,6 +217,7 @@ export component MainWindow inherits Window {
                     attrib-empty: root.perf-attrib-empty;
                     select(id) => { root.perf-select(id); }
                     toggle-detail => { root.perf-toggle-detail(); }
+                    toggle-pause => { root.toggle-pause(); }
                     hovered(x) => { root.perf-hovered(x); }
                     hover-cleared => { root.perf-hover-cleared(); }
                 }

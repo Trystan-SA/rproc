@@ -100,8 +100,13 @@ pub fn run(settings: Settings) -> anyhow::Result<()> {
 }
 
 fn tick(window: &MainWindow, st: &mut UiState) {
-    st.snapshot = st.sampler.snapshot();
     st.sampler.set_processes_active(window.get_tab() == 0);
+    // Paused: keep the displayed snapshot frozen and skip the periodic
+    // re-render; interactions still render on demand via their callbacks.
+    if window.get_paused() {
+        return;
+    }
+    st.snapshot = st.sampler.snapshot();
     st.proc.flush_icon_cache_if_due();
     render(window, st);
 
@@ -155,6 +160,11 @@ fn install_callbacks(window: &MainWindow, state: &Rc<RefCell<UiState>>) {
     // --- Navigation ---
     window.on_select_tab(handler!(|w, s, t: i32| {
         w.set_tab(t);
+    }));
+    window.on_toggle_pause(handler!(|w, s| {
+        let paused = !w.get_paused();
+        w.set_paused(paused);
+        s.sampler.set_paused(paused);
     }));
 
     // --- Performance ---
