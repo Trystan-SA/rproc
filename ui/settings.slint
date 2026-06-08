@@ -13,6 +13,7 @@ export component Settings inherits ScrollView {
     in property <string> attribution-status;
     in property <bool> gpu-enabled;
     in property <string> gpu-status;
+    in property <int> ui-scale;
     in property <string> version;
     in property <string> build;
     in property <bool> dark-mode;
@@ -22,6 +23,7 @@ export component Settings inherits ScrollView {
     callback attribution-toggled(bool);
     callback gpu-toggled(bool);
     callback theme-changed(bool);
+    callback set-ui-scale(int);
 
     VerticalLayout {
         spacing: 12px;
@@ -145,6 +147,40 @@ export component Settings inherits ScrollView {
                     toggled => { root.gpu-toggled(!root.gpu-enabled); }
                 }
                 Text { text: root.gpu-status; color: root.gpu-enabled ? Theme.accent : Theme.text-dim; font-weight: 700; }
+            }
+        }
+
+        Card {
+            VerticalLayout {
+                padding: 12px;
+                spacing: 8px;
+                Text { text: "Interface scale"; font-weight: 700; font-size: 15px; color: Theme.text; }
+                Text {
+                    text: "Enlarge or shrink all text and controls. Handy on high-DPI (4K) screens where the default UI feels too small.";
+                    color: Theme.text-dim; font-size: 11px; wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: start;
+                    for pct in [100, 125, 150, 175, 200]: Toggle {
+                        text: pct + "%";
+                        min-width: 64px;
+                        checked: root.ui-scale == pct;
+                        toggled => { root.set-ui-scale(pct); }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text { text: "Custom"; color: Theme.text-dim; font-size: 11px; vertical-alignment: center; }
+                    ThemedSlider {
+                        horizontal-stretch: 1;
+                        minimum: 75;
+                        maximum: 250;
+                        value: root.ui-scale;
+                        changed(v) => { root.set-ui-scale(v); }
+                    }
+                    Text { text: root.ui-scale + "%"; color: Theme.text; vertical-alignment: center; }
+                }
             }
         }
 

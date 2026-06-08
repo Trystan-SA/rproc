@@ -59,6 +59,7 @@ pub fn apply(window: &MainWindow, settings: &Settings) {
     }));
 
     window.set_set_dark_mode(settings.dark_mode());
+    window.set_set_ui_scale(settings.ui_scale_pct() as i32);
 
     window.set_set_version(ss(env!("CARGO_PKG_VERSION")));
     window.set_set_build(ss(if cfg!(debug_assertions) {

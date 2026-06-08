@@ -42,6 +42,9 @@ struct UiState {
     startup: startup::State,
     prop: Option<PropEntity>,
     ctx: ContextMenu,
+    /// The windowing system's native scale factor, captured once the event loop
+    /// has set it. User-chosen interface scaling is applied on top of this.
+    base_scale: Option<f32>,
 }
 
 pub fn run(settings: Settings) -> anyhow::Result<()> {
@@ -70,6 +73,7 @@ pub fn run(settings: Settings) -> anyhow::Result<()> {
         startup: startup::State::default(),
         prop: None,
         ctx: ContextMenu::default(),
+        base_scale: None,
     }));
 
     // Optional: open straight onto a given tab (handy for measuring RAM of a
@@ -96,6 +100,11 @@ pub fn run(settings: Settings) -> anyhow::Result<()> {
         timer.start(TimerMode::Repeated, Duration::from_millis(250), move || {
             if let Some(window) = w.upgrade() {
                 let mut s = st.borrow_mut();
+                // Apply the saved interface scale once the backend has reported
+                // the display's native factor (not yet known before run()).
+                if s.base_scale.is_none() {
+                    apply_ui_scale(&window, &mut s);
+                }
                 tick(&window, &mut s);
             }
         });
@@ -106,6 +115,23 @@ pub fn run(settings: Settings) -> anyhow::Result<()> {
     // Persist resolved icons on clean shutdown (see ui::icons::Resolver).
     state.borrow_mut().proc.save_icon_cache();
     Ok(())
+}
+
+/// Scale the whole UI by the user's chosen percentage on top of the display's
+/// native factor. Slint has no content-zoom, so we drive the window's scale
+/// factor directly — pairing it with a Resized event (as the windowing system
+/// does) so the layout and software-renderer buffer track the new scale.
+fn apply_ui_scale(window: &MainWindow, st: &mut UiState) {
+    let win = window.window();
+    let base = *st.base_scale.get_or_insert_with(|| win.scale_factor());
+    let target = base * st.settings.ui_scale_pct() as f32 / 100.0;
+    let phys = win.size();
+    win.dispatch_event(slint::platform::WindowEvent::ScaleFactorChanged {
+        scale_factor: target,
+    });
+    win.dispatch_event(slint::platform::WindowEvent::Resized {
+        size: slint::LogicalSize::new(phys.width as f32 / target, phys.height as f32 / target),
+    });
 }
 
 fn tick(window: &MainWindow, st: &mut UiState) {
@@ -410,6 +436,10 @@ fn install_callbacks(window: &MainWindow, state: &Rc<RefCell<UiState>>) {
         s.settings.set_dark_mode(dark);
         theme::set_dark(dark);
         w.global::<Theme>().set_dark(dark);
+    }));
+    window.on_cfg_set_ui_scale(handler!(|w, s, pct: i32| {
+        s.settings.set_ui_scale_pct(pct.max(0) as u64);
+        apply_ui_scale(&w, &mut s);
     }));
 
     // --- Properties modal ---

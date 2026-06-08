@@ -25,6 +25,10 @@ pub struct Settings {
     /// Whether the UI uses the dark palette (light otherwise). Read by the UI
     /// thread when applying the theme; persisted so the choice survives restarts.
     dark_mode: Arc<AtomicBool>,
+    /// Interface scale as a percentage of the display's native scaling, applied
+    /// on top of the windowing system's scale factor. Lets users enlarge the
+    /// whole UI on high-DPI screens where the default feels too small.
+    ui_scale_pct: Arc<AtomicU64>,
 }
 
 impl Default for Settings {
@@ -37,6 +41,7 @@ impl Default for Settings {
             attribution_enabled: Arc::new(AtomicBool::new(false)),
             gpu_enabled: Arc::new(AtomicBool::new(true)),
             dark_mode: Arc::new(AtomicBool::new(true)),
+            ui_scale_pct: Arc::new(AtomicU64::new(DEFAULT_UI_SCALE_PCT)),
         }
     }
 }
@@ -44,6 +49,10 @@ impl Default for Settings {
 pub const DEFAULT_REFRESH_MS: u64 = 1000;
 pub const MIN_REFRESH_MS: u64 = 100;
 pub const MAX_REFRESH_MS: u64 = 30_000;
+
+pub const DEFAULT_UI_SCALE_PCT: u64 = 100;
+pub const MIN_UI_SCALE_PCT: u64 = 75;
+pub const MAX_UI_SCALE_PCT: u64 = 250;
 
 /// Curated presets surfaced as quick-pick buttons in the Settings page.
 pub const REFRESH_PRESETS: &[(u64, &str)] = &[
@@ -84,6 +93,14 @@ impl Settings {
                 "dark_mode" => settings
                     .dark_mode
                     .store(matches!(value.trim(), "true" | "1"), Ordering::Relaxed),
+                "ui_scale_pct" => {
+                    if let Ok(pct) = value.trim().parse::<u64>() {
+                        settings.ui_scale_pct.store(
+                            pct.clamp(MIN_UI_SCALE_PCT, MAX_UI_SCALE_PCT),
+                            Ordering::Relaxed,
+                        );
+                    }
+                }
                 _ => {}
             }
         }
@@ -159,6 +176,19 @@ impl Settings {
         self.save();
     }
 
+    pub fn ui_scale_pct(&self) -> u64 {
+        self.ui_scale_pct.load(Ordering::Relaxed)
+    }
+
+    /// Set the interface scale (clamped to a sane range) and persist it.
+    pub fn set_ui_scale_pct(&self, pct: u64) {
+        self.ui_scale_pct.store(
+            pct.clamp(MIN_UI_SCALE_PCT, MAX_UI_SCALE_PCT),
+            Ordering::Relaxed,
+        );
+        self.save();
+    }
+
     /// Persist the current settings to disk. Best-effort: any failure is
     /// logged to stderr but never propagates.
     fn save(&self) {
@@ -166,11 +196,12 @@ impl Settings {
             return;
         };
         let body = format!(
-            "daemon_enabled={}\nattribution_enabled={}\ngpu_enabled={}\ndark_mode={}\n",
+            "daemon_enabled={}\nattribution_enabled={}\ngpu_enabled={}\ndark_mode={}\nui_scale_pct={}\n",
             self.daemon_enabled.load(Ordering::Relaxed),
             self.attribution_enabled.load(Ordering::Relaxed),
             self.gpu_enabled.load(Ordering::Relaxed),
-            self.dark_mode.load(Ordering::Relaxed)
+            self.dark_mode.load(Ordering::Relaxed),
+            self.ui_scale_pct.load(Ordering::Relaxed)
         );
         if let Err(e) = std::fs::write(&path, body) {
             eprintln!("rproc: failed to save settings: {e}");

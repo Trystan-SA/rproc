@@ -121,6 +121,7 @@ export component MainWindow inherits Window {
     in property <string> set-attribution-status;
     in property <bool> set-gpu-enabled;
     in property <string> set-gpu-status;
+    in property <int> set-ui-scale;
     in property <string> set-version;
     in property <string> set-build;
     in property <bool> set-dark-mode;
@@ -129,6 +130,7 @@ export component MainWindow inherits Window {
     callback cfg-attribution-toggled(bool);
     callback cfg-gpu-toggled(bool);
     callback cfg-theme-toggled(bool);
+    callback cfg-set-ui-scale(int);
 
     // --- Properties modal (generic: process / service / startup) ---
     in-out property <bool> prop-open;
@@ -271,6 +273,7 @@ export component MainWindow inherits Window {
                     attribution-status: root.set-attribution-status;
                     gpu-enabled: root.set-gpu-enabled;
                     gpu-status: root.set-gpu-status;
+                    ui-scale: root.set-ui-scale;
                     version: root.set-version;
                     build: root.set-build;
                     dark-mode: root.set-dark-mode;
@@ -279,6 +282,7 @@ export component MainWindow inherits Window {
                     attribution-toggled(e) => { root.cfg-attribution-toggled(e); }
                     gpu-toggled(e) => { root.cfg-gpu-toggled(e); }
                     theme-changed(d) => { root.cfg-theme-toggled(d); }
+                    set-ui-scale(v) => { root.cfg-set-ui-scale(v); }
                 }
             }
         }
