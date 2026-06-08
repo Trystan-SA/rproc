@@ -18,9 +18,12 @@ export component MainWindow inherits Window {
     min-width: 480px;
     min-height: 400px;
     background: Theme.bg;
-    // Force std-widgets (ScrollView/Slider scrollbars) to their dark styling
-    // instead of following the system light scheme.
-    init => { Palette.color-scheme = ColorScheme.dark; }
+    // Keep std-widgets (ScrollView/Slider scrollbars) in step with our palette
+    // instead of following the system scheme; track Theme.dark so the scrollbars
+    // flip with the rest of the UI when the theme is toggled.
+    property <bool> dark-scheme: Theme.dark;
+    changed dark-scheme => { Palette.color-scheme = root.dark-scheme ? ColorScheme.dark : ColorScheme.light; }
+    init => { Palette.color-scheme = Theme.dark ? ColorScheme.dark : ColorScheme.light; }
 
     property <bool> compact: root.width < 900px;
 
@@ -120,10 +123,12 @@ export component MainWindow inherits Window {
     in property <string> set-gpu-status;
     in property <string> set-version;
     in property <string> set-build;
+    in property <bool> set-dark-mode;
     callback cfg-set-refresh(int);
     callback cfg-daemon-toggled(bool);
     callback cfg-attribution-toggled(bool);
     callback cfg-gpu-toggled(bool);
+    callback cfg-theme-toggled(bool);
 
     // --- Properties modal (generic: process / service / startup) ---
     in-out property <bool> prop-open;
@@ -268,10 +273,12 @@ export component MainWindow inherits Window {
                     gpu-status: root.set-gpu-status;
                     version: root.set-version;
                     build: root.set-build;
+                    dark-mode: root.set-dark-mode;
                     set-refresh(ms) => { root.cfg-set-refresh(ms); }
                     daemon-toggled(e) => { root.cfg-daemon-toggled(e); }
                     attribution-toggled(e) => { root.cfg-attribution-toggled(e); }
                     gpu-toggled(e) => { root.cfg-gpu-toggled(e); }
+                    theme-changed(d) => { root.cfg-theme-toggled(d); }
                 }
             }
         }

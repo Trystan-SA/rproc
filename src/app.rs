@@ -10,6 +10,7 @@ use crate::monitor::Sampler;
 use crate::monitor::startup::StartupSource;
 use crate::monitor::{Snapshot, processes as procmon};
 use crate::settings::Settings;
+use crate::theme;
 use crate::ui::context_menu::{self, Act, ContextMenu, Target};
 use crate::ui::processes::RowRef;
 use crate::ui::processes::properties::{
@@ -21,7 +22,7 @@ use crate::ui::startup::properties::{
 };
 use crate::ui::widgets::{self, OpenTarget, format_bytes, format_duration};
 use crate::ui::{performance, processes, services, settings as settings_ui, startup};
-use crate::{MainWindow, MenuEntry, PathField, StatLine};
+use crate::{MainWindow, MenuEntry, PathField, StatLine, Theme};
 
 /// Which entity the Properties modal is showing. Each holds the cached heavy
 /// lookup so the modal doesn't re-walk `/proc` or re-spawn `systemctl` per tick.
@@ -45,6 +46,14 @@ struct UiState {
 
 pub fn run(settings: Settings) -> anyhow::Result<()> {
     let window = MainWindow::new()?;
+
+    // Apply the persisted light/dark choice before the first render: the Slint
+    // `Theme` global drives the `.slint` palette, the atomic drives the colors
+    // the glue bakes into row/series data.
+    let dark = settings.dark_mode();
+    theme::set_dark(dark);
+    window.global::<Theme>().set_dark(dark);
+
     let sampler = Sampler::start(
         settings.refresh_handle(),
         settings.attribution_handle(),
@@ -396,6 +405,11 @@ fn install_callbacks(window: &MainWindow, state: &Rc<RefCell<UiState>>) {
     }));
     window.on_cfg_gpu_toggled(handler!(|w, s, e: bool| {
         s.settings.set_gpu_enabled(e);
+    }));
+    window.on_cfg_theme_toggled(handler!(|w, s, dark: bool| {
+        s.settings.set_dark_mode(dark);
+        theme::set_dark(dark);
+        w.global::<Theme>().set_dark(dark);
     }));
 
     // --- Properties modal ---

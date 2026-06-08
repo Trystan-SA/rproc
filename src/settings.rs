@@ -22,6 +22,9 @@ pub struct Settings {
     /// off at launch, NVML is never loaded and the GPU cards/graphs are hidden.
     /// Read live by the sampler thread (lazy-inits NVML when flipped on).
     gpu_enabled: Arc<AtomicBool>,
+    /// Whether the UI uses the dark palette (light otherwise). Read by the UI
+    /// thread when applying the theme; persisted so the choice survives restarts.
+    dark_mode: Arc<AtomicBool>,
 }
 
 impl Default for Settings {
@@ -33,6 +36,7 @@ impl Default for Settings {
             daemon_enabled: Arc::new(AtomicBool::new(false)),
             attribution_enabled: Arc::new(AtomicBool::new(false)),
             gpu_enabled: Arc::new(AtomicBool::new(true)),
+            dark_mode: Arc::new(AtomicBool::new(true)),
         }
     }
 }
@@ -76,6 +80,9 @@ impl Settings {
                     .store(matches!(value.trim(), "true" | "1"), Ordering::Relaxed),
                 "gpu_enabled" => settings
                     .gpu_enabled
+                    .store(matches!(value.trim(), "true" | "1"), Ordering::Relaxed),
+                "dark_mode" => settings
+                    .dark_mode
                     .store(matches!(value.trim(), "true" | "1"), Ordering::Relaxed),
                 _ => {}
             }
@@ -141,6 +148,17 @@ impl Settings {
         self.gpu_enabled.clone()
     }
 
+    pub fn dark_mode(&self) -> bool {
+        self.dark_mode.load(Ordering::Relaxed)
+    }
+
+    /// Flip the light/dark choice and persist it. The caller updates the Slint
+    /// `Theme.dark` global and `theme::set_dark` so the change takes effect.
+    pub fn set_dark_mode(&self, dark: bool) {
+        self.dark_mode.store(dark, Ordering::Relaxed);
+        self.save();
+    }
+
     /// Persist the current settings to disk. Best-effort: any failure is
     /// logged to stderr but never propagates.
     fn save(&self) {
@@ -148,10 +166,11 @@ impl Settings {
             return;
         };
         let body = format!(
-            "daemon_enabled={}\nattribution_enabled={}\ngpu_enabled={}\n",
+            "daemon_enabled={}\nattribution_enabled={}\ngpu_enabled={}\ndark_mode={}\n",
             self.daemon_enabled.load(Ordering::Relaxed),
             self.attribution_enabled.load(Ordering::Relaxed),
-            self.gpu_enabled.load(Ordering::Relaxed)
+            self.gpu_enabled.load(Ordering::Relaxed),
+            self.dark_mode.load(Ordering::Relaxed)
         );
         if let Err(e) = std::fs::write(&path, body) {
             eprintln!("rproc: failed to save settings: {e}");

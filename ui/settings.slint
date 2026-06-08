@@ -15,17 +15,47 @@ export component Settings inherits ScrollView {
     in property <string> gpu-status;
     in property <string> version;
     in property <string> build;
+    in property <bool> dark-mode;
 
     callback set-refresh(int);
     callback daemon-toggled(bool);
     callback attribution-toggled(bool);
     callback gpu-toggled(bool);
+    callback theme-changed(bool);
 
     VerticalLayout {
         spacing: 12px;
         padding-right: 12px;
         Text { text: "Settings"; font-size: 20px; font-weight: 700; color: Theme.text; }
         Text { text: "Tweak how rproc samples and displays system data."; color: Theme.text-dim; }
+
+        Card {
+            VerticalLayout {
+                padding: 12px;
+                spacing: 8px;
+                Text { text: "Appearance"; font-weight: 700; font-size: 15px; color: Theme.text; }
+                Text {
+                    text: "Switch between the light and dark color scheme. Your choice is saved across restarts.";
+                    color: Theme.text-dim; font-size: 11px; wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: start;
+                    Toggle {
+                        text: "Light";
+                        min-width: 76px;
+                        checked: !root.dark-mode;
+                        toggled => { root.theme-changed(false); }
+                    }
+                    Toggle {
+                        text: "Dark";
+                        min-width: 76px;
+                        checked: root.dark-mode;
+                        toggled => { root.theme-changed(true); }
+                    }
+                }
+            }
+        }
 
         Card {
             VerticalLayout {

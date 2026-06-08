@@ -58,6 +58,8 @@ pub fn apply(window: &MainWindow, settings: &Settings) {
         "GPU monitoring off — NVML/CUDA not loaded"
     }));
 
+    window.set_set_dark_mode(settings.dark_mode());
+
     window.set_set_version(ss(env!("CARGO_PKG_VERSION")));
     window.set_set_build(ss(if cfg!(debug_assertions) {
         "debug"

@@ -1,31 +1,36 @@
-// Palette mirroring src/theme.rs (Windows 11 "mica" dark look). Kept in one
-// global so every component reads the same colors and the look stays 1:1 with
-// the previous egui build.
+// Palette mirroring src/theme.rs. The `dark` flag (driven from Rust via the
+// persisted setting) swaps the whole palette between the Windows 11 "mica" dark
+// look and a matching light scheme; every component reads these so the look
+// stays consistent and follows the user's choice.
 export global Theme {
-    out property <color> accent: #60CDFF;
-    out property <color> bg: #1F1F1F;
-    out property <color> sidebar-bg: #2A2A2A;
-    out property <color> panel-bg: #262626;
-    out property <color> card-bg: #2E2E2E;
-    out property <color> hover-bg: #383838;
-    out property <color> active-bg: #444444;
-    out property <color> text: #E6E6E6;
-    out property <color> text-dim: #9A9A9A;
-    out property <color> text-faint: #5A5A5A;
+    in-out property <bool> dark: true;
+
+    out property <color> accent: dark ? #60CDFF : #0067C0;
+    out property <color> bg: dark ? #1F1F1F : #F3F3F3;
+    out property <color> sidebar-bg: dark ? #2A2A2A : #EAEAEA;
+    out property <color> panel-bg: dark ? #262626 : #ECECEC;
+    out property <color> card-bg: dark ? #2E2E2E : #FFFFFF;
+    out property <color> hover-bg: dark ? #383838 : #E0E0E0;
+    out property <color> active-bg: dark ? #444444 : #D2D2D2;
+    out property <color> text: dark ? #E6E6E6 : #1A1A1A;
+    out property <color> text-dim: dark ? #9A9A9A : #5C5C5C;
+    out property <color> text-faint: dark ? #5A5A5A : #ADADAD;
 
     // Hairline separators (table columns, etc.).
-    out property <color> divider: #ffffff1A;
+    out property <color> divider: dark ? #ffffff1A : #0000001F;
 
+    // Graph series stay vivid in both schemes — saturated lines read well on
+    // either background, so they don't depend on `dark`.
     out property <color> graph-cpu: #39A7FF;
     out property <color> graph-ram: #B46AFF;
     out property <color> graph-disk: #4EE0B3;
     out property <color> graph-net: #FFB04E;
     out property <color> graph-gpu: #FF5C8A;
 
-    out property <color> ok: #55D17C;
-    out property <color> warn: #FFC44D;
-    out property <color> err: #FF6B6B;
+    out property <color> ok: dark ? #55D17C : #2E9E54;
+    out property <color> warn: dark ? #FFC44D : #B8860B;
+    out property <color> err: dark ? #FF6B6B : #D13438;
 
     // Translucent accent used for selected rows / cards.
-    out property <brush> selection-bg: #60CDFF26;
+    out property <brush> selection-bg: dark ? #60CDFF26 : #0067C026;
 }
