@@ -191,6 +191,13 @@ jobs:
     if: ${{ always() && needs.build-binary.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
+      # Checkout first: actions/checkout cleans the workspace, so downloading
+      # artifacts before it would wipe dist/ and publish a release with no files.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -200,11 +207,6 @@ jobs:
 
       - name: List artifacts
         run: ls -la dist/
-
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       # Generate notes against the previous semver tag explicitly. GitHub's
       # auto-detection picks the nearest ancestor tag, which double-counts a
