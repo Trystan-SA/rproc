@@ -297,8 +297,8 @@ fn apply_detail(window: &MainWindow, state: &State, snap: &Snapshot, attribution
     let mut subtitle = String::new();
     let mut graph_title = "Usage (last 60s)";
     let mut series: Vec<GraphSeries> = Vec::new();
-    let mut vram_series: Vec<GraphSeries> = Vec::new();
-    let mut vram_title = String::new();
+    let mut aux_series: Vec<GraphSeries> = Vec::new();
+    let mut aux_title = String::new();
     let mut stats: Vec<StatLine> = Vec::new();
     let mut cores: Vec<CoreCell> = Vec::new();
     let mut show_cores = false;
@@ -403,6 +403,15 @@ fn apply_detail(window: &MainWindow, state: &State, snap: &Snapshot, attribution
                 stats.push(separator());
                 stats.push(stat("Total received", &format_bytes(n.rx_total)));
                 stats.push(stat("Total sent", &format_bytes(n.tx_total)));
+                if let Some(w) = &n.wifi {
+                    let q = snap.history.wifi_quality.get(&n.name).unwrap_or(&empty_f32);
+                    aux_series.push(series_f32(q, 100.0, theme::graph_wifi()));
+                    aux_title = "Signal quality (last 60s)".into();
+                    stats.push(separator());
+                    stats.push(stat("Signal quality", &format!("{:.0}%", w.quality_pct)));
+                    stats.push(stat("Signal level", &format!("{:.0} dBm", w.signal_dbm)));
+                    stats.push(stat("Link quality", &format!("{:.0}", w.link_quality)));
+                }
                 // Network attribution is intentionally unavailable.
             } else {
                 title = "No interface".into();
@@ -427,8 +436,8 @@ fn apply_detail(window: &MainWindow, state: &State, snap: &Snapshot, attribution
                 series.push(series_f32(util, 100.0, theme::graph_gpu()));
                 if g.mem_total > 0 {
                     let mem = snap.history.gpu_mem_pct.get(i).unwrap_or(&empty_f32);
-                    vram_series.push(series_f32(mem, 100.0, theme::graph_ram()));
-                    vram_title = if g.mem_shared {
+                    aux_series.push(series_f32(mem, 100.0, theme::graph_ram()));
+                    aux_title = if g.mem_shared {
                         "Memory, shared (last 60s)".into()
                     } else {
                         "VRAM (last 60s)".into()
@@ -548,8 +557,8 @@ fn apply_detail(window: &MainWindow, state: &State, snap: &Snapshot, attribution
     window.set_perf_detail_subtitle(ss(&subtitle));
     window.set_perf_graph_title(ss(graph_title));
     window.set_perf_detail_series(model(series));
-    window.set_perf_vram_series(model(vram_series));
-    window.set_perf_vram_title(ss(&vram_title));
+    window.set_perf_aux_series(model(aux_series));
+    window.set_perf_aux_title(ss(&aux_title));
     window.set_perf_detail_stats(model(stats));
     window.set_perf_detail_cores(model(cores));
     window.set_perf_show_cores(show_cores);
@@ -596,8 +605,8 @@ fn section_refs<'a>(
             if let Some(n) = snap.system.nets.get(i) {
                 let rx = snap.history.net_rx_bps.get(&n.name).unwrap_or(empty_f64);
                 let tx = snap.history.net_tx_bps.get(&n.name).unwrap_or(empty_f64);
-                data.push(("rx".into(), SeriesRef::Bps(rx)));
-                data.push(("tx".into(), SeriesRef::Bps(tx)));
+                data.push(("receive".into(), SeriesRef::Bps(rx)));
+                data.push(("send".into(), SeriesRef::Bps(tx)));
             }
             None
         }

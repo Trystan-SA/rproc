@@ -39,6 +39,9 @@ pub struct History {
     /// (e.g. `wlp4s0`, `enp0s31f6`).
     pub net_rx_bps: HashMap<String, VecDeque<f64>>,
     pub net_tx_bps: HashMap<String, VecDeque<f64>>,
+    /// Per-interface wireless signal quality (0..100), keyed by interface name.
+    /// Only populated for interfaces that report a wireless signal.
+    pub wifi_quality: HashMap<String, VecDeque<f32>>,
     /// Per-physical-disk history, keyed by device path (e.g. `/dev/nvme0n1`).
     pub disk_read_bps: HashMap<String, VecDeque<f64>>,
     pub disk_write_bps: HashMap<String, VecDeque<f64>>,
@@ -298,6 +301,14 @@ fn sampler_loop(
                 .entry(n.name.clone())
                 .or_insert_with(|| VecDeque::with_capacity(HISTORY_LEN));
             push_capped(w, n.tx_bps, HISTORY_LEN);
+            if let Some(s) = &n.wifi {
+                let q = working
+                    .history
+                    .wifi_quality
+                    .entry(n.name.clone())
+                    .or_insert_with(|| VecDeque::with_capacity(HISTORY_LEN));
+                push_capped(q, s.quality_pct, HISTORY_LEN);
+            }
         }
         working
             .history
@@ -306,6 +317,10 @@ fn sampler_loop(
         working
             .history
             .net_tx_bps
+            .retain(|k, _| net_present.contains(k));
+        working
+            .history
+            .wifi_quality
             .retain(|k, _| net_present.contains(k));
 
         let mut present: HashSet<String> = HashSet::with_capacity(summary.disks.len());

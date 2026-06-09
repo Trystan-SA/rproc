@@ -36,8 +36,8 @@ export component Performance inherits Rectangle {
     in property <string> detail-subtitle;
     in property <string> graph-title;
     in property <[GraphSeries]> detail-series;
-    in property <[GraphSeries]> vram-series;
-    in property <string> vram-title;
+    in property <[GraphSeries]> aux-series;
+    in property <string> aux-title;
     in property <[StatLine]> detail-stats;
     in property <[CoreCell]> detail-cores;
     in property <bool> show-cores;
@@ -194,10 +194,10 @@ export component Performance inherits Rectangle {
                                 }
                             }
 
-                            if root.vram-series.length > 0: Text { text: root.vram-title; color: Theme.text; }
-                            if root.vram-series.length > 0: vram-box := Rectangle {
+                            if root.aux-series.length > 0: Text { text: root.aux-title; color: Theme.text; }
+                            if root.aux-series.length > 0: aux-box := Rectangle {
                                 height: 120px;
-                                Graph { series: root.vram-series; width: 100%; height: 100%; }
+                                Graph { series: root.aux-series; width: 100%; height: 100%; }
                                 // Same crosshair as the usage graph (the readout stays up there).
                                 if root.hover-active: Rectangle {
                                     x: root.hover-x * parent.width;
@@ -206,7 +206,7 @@ export component Performance inherits Rectangle {
                                 }
                                 TouchArea {
                                     mouse-cursor: crosshair;
-                                    changed mouse-x => { root.hovered(self.mouse-x / vram-box.width); }
+                                    changed mouse-x => { root.hovered(self.mouse-x / aux-box.width); }
                                     changed has-hover => { if (!self.has-hover) { root.hover-cleared(); } }
                                 }
                             }

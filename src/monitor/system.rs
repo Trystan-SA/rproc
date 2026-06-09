@@ -2,6 +2,8 @@ use std::collections::HashMap;
 
 use sysinfo::{Components, Disks, Networks, System};
 
+use super::wifi::{self, WifiSignal};
+
 #[derive(Clone, Default)]
 pub struct SystemSummary {
     pub host_name: String,
@@ -96,6 +98,8 @@ pub struct NetInfo {
     pub rx_total: u64,
     pub tx_total: u64,
     pub mac: String,
+    /// `Some` only for wireless interfaces with a readable signal.
+    pub wifi: Option<WifiSignal>,
 }
 
 /// Keep only interfaces that represent real outbound connectivity:
@@ -228,6 +232,7 @@ impl SystemSummary {
         let mut net_rx = 0.0;
         let mut net_tx = 0.0;
         let mut net_list = Vec::new();
+        let mut wifi = wifi::collect();
         for (name, data) in nets.iter() {
             if !is_relevant_iface(name) {
                 continue;
@@ -243,6 +248,7 @@ impl SystemSummary {
                 rx_total: data.total_received(),
                 tx_total: data.total_transmitted(),
                 mac: data.mac_address().to_string(),
+                wifi: wifi.remove(name),
             });
         }
 

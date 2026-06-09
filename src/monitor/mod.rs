@@ -7,5 +7,6 @@ pub mod sampler;
 pub mod services;
 pub mod startup;
 pub mod system;
+pub mod wifi;
 
 pub use sampler::{Sampler, Snapshot};
