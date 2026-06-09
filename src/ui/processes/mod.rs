@@ -147,10 +147,14 @@ pub fn apply(window: &MainWindow, state: &mut State, snap: &Snapshot) {
     };
 
     let groups: Vec<Group> = build_groups(&snap.processes, &matches);
+    // A group is an App if any of its processes was launched as one. The
+    // systemd cgroup app id is the authoritative signal (and is inherited by an
+    // app's children); the `.desktop` name/exe match is the fallback for
+    // desktops that don't place apps in per-app `app.slice` scopes.
     let (mut apps, mut services): (Vec<Group>, Vec<Group>) = groups.into_iter().partition(|g| {
         g.procs
             .iter()
-            .any(|p| state.icons.has_desktop_entry(&p.name, &p.exe))
+            .any(|p| p.app_id.is_some() || state.icons.has_desktop_entry(&p.name, &p.exe))
     });
     for section in [&mut apps, &mut services] {
         sort_groups(section, state.sort, state.descending);

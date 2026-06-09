@@ -54,10 +54,11 @@ pub(super) enum Row<'a> {
     Child(&'a monitor::processes::ProcInfo),
 }
 
-/// Split the built groups into the "Apps" section (processes with a freedesktop
-/// `.desktop` entry — launchable applications) and the background section
-/// (daemons, kernel threads, helpers). Each section is sorted independently by
-/// the caller so background processes can never rank above apps.
+/// Append a section (its header plus group/process rows) to `visible`. The
+/// caller partitions groups into "Apps" (launched applications, by systemd
+/// cgroup or `.desktop` match) and the background section (daemons, kernel
+/// threads, helpers), and sorts each independently so background processes can
+/// never rank above apps.
 pub(super) fn append_section<'a>(
     visible: &mut Vec<Row<'a>>,
     title: &'static str,

@@ -1,5 +1,6 @@
 pub mod attribution;
 pub mod battery;
+pub mod cgroup;
 pub mod gpu;
 pub mod gpu_attribution;
 pub mod processes;

@@ -16,6 +16,9 @@ pub struct ProcInfo {
     pub status: String,
     pub threads: usize,
     pub start_time: u64,
+    /// freedesktop app id from the process's systemd cgroup when it was launched
+    /// as an application (see [`super::cgroup`]); drives the Apps/Background split.
+    pub app_id: Option<String>,
 }
 
 /// Map sysinfo's instantaneous status to a more meaningful label for the UI.
@@ -71,6 +74,9 @@ pub fn collect(sys: &System, users: &Users) -> Vec<ProcInfo> {
         let cpu_pct = p.cpu_usage() / cores;
         let raw_status = format!("{:?}", p.status());
         let status = derive_status(&raw_status, cpu_pct);
+        let app_id = std::fs::read_to_string(format!("/proc/{}/cgroup", pid.as_u32()))
+            .ok()
+            .and_then(|c| super::cgroup::app_id(&c));
         list.push(ProcInfo {
             pid: pid.as_u32(),
             parent: p.parent().map(|p| p.as_u32()),
@@ -89,6 +95,7 @@ pub fn collect(sys: &System, users: &Users) -> Vec<ProcInfo> {
             status,
             threads: p.tasks().map(|t| t.len()).unwrap_or(0),
             start_time: p.start_time(),
+            app_id,
         });
     }
     list
