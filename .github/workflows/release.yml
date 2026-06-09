@@ -26,11 +26,12 @@ jobs:
             git
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust
         run: |
-          curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+          curl --retry 5 --retry-connrefused --retry-delay 5 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain stable --profile minimal
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Build
@@ -45,14 +46,14 @@ jobs:
           sha256sum rproc-${GITHUB_REF_NAME}-linux-x86_64.tar.gz > rproc-${GITHUB_REF_NAME}-linux-x86_64.tar.gz.sha256
 
       - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: rproc-binary
           path: target/release/rproc
           retention-days: 1
 
       - name: Upload tarball
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: rproc-tarball
           path: dist/*
@@ -62,7 +63,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -71,7 +72,7 @@ jobs:
         run: cargo install cargo-deb --locked
 
       - name: Download prebuilt binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: rproc-binary
           path: target/release
@@ -83,7 +84,7 @@ jobs:
         run: cargo deb --no-build --no-strip --output dist/
 
       - name: Upload .deb
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: rproc-deb
           path: dist/*.deb
@@ -93,7 +94,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -102,7 +103,7 @@ jobs:
         run: cargo install cargo-generate-rpm --locked
 
       - name: Download prebuilt binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: rproc-binary
           path: target/release
@@ -116,7 +117,7 @@ jobs:
         run: cargo generate-rpm
 
       - name: Upload .rpm
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: rproc-rpm
           path: target/generate-rpm/*.rpm
@@ -128,11 +129,11 @@ jobs:
       options: --privileged
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Generate cargo-sources.json
         run: |
-          curl -L -o /tmp/flatpak-cargo-generator.py \
+          curl --retry 5 --retry-connrefused --retry-delay 5 -L -o /tmp/flatpak-cargo-generator.py \
             https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
           python3 -m pip install --break-system-packages aiohttp toml
           python3 /tmp/flatpak-cargo-generator.py Cargo.lock \
@@ -151,10 +152,10 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Download prebuilt binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: rproc-binary
           path: target/release
@@ -171,14 +172,14 @@ jobs:
              AppDir/io.github.trystan_sa.rproc.svg
           cp packaging/appimage/AppRun AppDir/AppRun
           chmod +x AppDir/AppRun
-          curl -sSfL -o appimagetool \
+          curl --retry 5 --retry-connrefused --retry-delay 5 -sSfL -o appimagetool \
             https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x appimagetool
           ./appimagetool --appimage-extract
           ./squashfs-root/AppRun AppDir rproc-${{ github.ref_name }}-x86_64.AppImage
 
       - name: Upload AppImage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: rproc-appimage
           path: rproc-*.AppImage
@@ -194,12 +195,12 @@ jobs:
       # Checkout first: actions/checkout cleans the workspace, so downloading
       # artifacts before it would wipe dist/ and publish a release with no files.
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           path: dist
           pattern: rproc-*
@@ -246,10 +247,10 @@ jobs:
     environment: AutoDeploy
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Download tarball artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: rproc-tarball
           path: dist
