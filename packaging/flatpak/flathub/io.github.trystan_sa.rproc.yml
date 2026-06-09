@@ -39,7 +39,5 @@ modules:
       - type: git
         url: https://github.com/Trystan-SA/rproc.git
         tag: v0.3.6
-        # TODO: fill in with the v0.3.6 tag's commit after release
-        # (git rev-list -n1 v0.3.6). Flathub requires both tag and commit.
-        commit: 0000000000000000000000000000000000000000
+        commit: c3a36be8eeafffb6dd1a5f8110992a591041bdac
       - cargo-sources.json
