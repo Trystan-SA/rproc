@@ -124,12 +124,12 @@ export component MainWindow inherits Window {
     in property <int> set-ui-scale;
     in property <string> set-version;
     in property <string> set-build;
-    in property <bool> set-dark-mode;
+    in property <int> set-theme-index;
     callback cfg-set-refresh(int);
     callback cfg-daemon-toggled(bool);
     callback cfg-attribution-toggled(bool);
     callback cfg-gpu-toggled(bool);
-    callback cfg-theme-toggled(bool);
+    callback cfg-theme-changed(int);
     callback cfg-set-ui-scale(int);
 
     // --- Properties modal (generic: process / service / startup) ---
@@ -276,12 +276,12 @@ export component MainWindow inherits Window {
                     ui-scale: root.set-ui-scale;
                     version: root.set-version;
                     build: root.set-build;
-                    dark-mode: root.set-dark-mode;
+                    theme-index: root.set-theme-index;
                     set-refresh(ms) => { root.cfg-set-refresh(ms); }
                     daemon-toggled(e) => { root.cfg-daemon-toggled(e); }
                     attribution-toggled(e) => { root.cfg-attribution-toggled(e); }
                     gpu-toggled(e) => { root.cfg-gpu-toggled(e); }
-                    theme-changed(d) => { root.cfg-theme-toggled(d); }
+                    theme-changed(i) => { root.cfg-theme-changed(i); }
                     set-ui-scale(v) => { root.cfg-set-ui-scale(v); }
                 }
             }

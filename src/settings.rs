@@ -1,6 +1,7 @@
+use crate::theme;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 
 /// Shared, lock-free settings handle. Cloning is cheap (just an Arc bump);
 /// the sampler thread keeps one clone and reads it each tick, the UI thread
@@ -22,9 +23,9 @@ pub struct Settings {
     /// off at launch, NVML is never loaded and the GPU cards/graphs are hidden.
     /// Read live by the sampler thread (lazy-inits NVML when flipped on).
     gpu_enabled: Arc<AtomicBool>,
-    /// Whether the UI uses the dark palette (light otherwise). Read by the UI
-    /// thread when applying the theme; persisted so the choice survives restarts.
-    dark_mode: Arc<AtomicBool>,
+    /// Theme choice: 0 = Dark, 1 = Light, 2 = System (follows desktop colour
+    /// scheme). Persisted so the choice survives restarts.
+    theme: Arc<AtomicU8>,
     /// Interface scale as a percentage of the display's native scaling, applied
     /// on top of the windowing system's scale factor. Lets users enlarge the
     /// whole UI on high-DPI screens where the default feels too small.
@@ -35,12 +36,10 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             refresh_ms: Arc::new(AtomicU64::new(DEFAULT_REFRESH_MS)),
-            // Off by default: the background daemon is a second process that also
-            // loads NVML/CUDA. Opt in for pre-filled history across restarts.
             daemon_enabled: Arc::new(AtomicBool::new(false)),
+            theme: Arc::new(AtomicU8::new(2)), // system
             attribution_enabled: Arc::new(AtomicBool::new(false)),
             gpu_enabled: Arc::new(AtomicBool::new(true)),
-            dark_mode: Arc::new(AtomicBool::new(true)),
             ui_scale_pct: Arc::new(AtomicU64::new(DEFAULT_UI_SCALE_PCT)),
         }
     }
@@ -90,9 +89,20 @@ impl Settings {
                 "gpu_enabled" => settings
                     .gpu_enabled
                     .store(matches!(value.trim(), "true" | "1"), Ordering::Relaxed),
-                "dark_mode" => settings
-                    .dark_mode
-                    .store(matches!(value.trim(), "true" | "1"), Ordering::Relaxed),
+                "theme" => {
+                    if let Ok(n) = value.trim().parse::<u8>() {
+                        settings.theme.store(n.clamp(0, 2), Ordering::Relaxed);
+                    }
+                }
+                // Backward compat: migrate old `dark_mode` key to `theme`.
+                "dark_mode" => {
+                    let dark = matches!(value.trim(), "true" | "1");
+                    if settings.theme.load(Ordering::Relaxed) == 2 {
+                        settings
+                            .theme
+                            .store(if dark { 0 } else { 1 }, Ordering::Relaxed);
+                    }
+                }
                 "ui_scale_pct" => {
                     if let Ok(pct) = value.trim().parse::<u64>() {
                         settings.ui_scale_pct.store(
@@ -133,6 +143,31 @@ impl Settings {
         self.save();
     }
 
+    /// Get the stored theme preference.
+    pub fn theme(&self) -> theme::Theme {
+        match self.theme.load(Ordering::Relaxed) {
+            0 => theme::Theme::Dark,
+            1 => theme::Theme::Light,
+            _ => theme::Theme::System,
+        }
+    }
+
+    /// Get the theme as its raw u8 value for passing to the Slint UI.
+    pub fn theme_index(&self) -> u8 {
+        self.theme.load(Ordering::Relaxed)
+    }
+
+    /// Store and apply a new theme choice. Resolves `Theme::System` via D-Bus /
+    /// gsettings and updates the process-wide dark flag. Returns the resolved
+    /// dark/light boolean so the caller can forward it to the Slint `Theme.dark`
+    /// global.
+    pub fn set_theme(&self, t: theme::Theme) -> bool {
+        self.theme.store(t as u8, Ordering::Relaxed);
+        let dark = theme::set_theme(t);
+        self.save();
+        dark
+    }
+
     pub fn attribution_enabled(&self) -> bool {
         self.attribution_enabled.load(Ordering::Relaxed)
     }
@@ -165,17 +200,6 @@ impl Settings {
         self.gpu_enabled.clone()
     }
 
-    pub fn dark_mode(&self) -> bool {
-        self.dark_mode.load(Ordering::Relaxed)
-    }
-
-    /// Flip the light/dark choice and persist it. The caller updates the Slint
-    /// `Theme.dark` global and `theme::set_dark` so the change takes effect.
-    pub fn set_dark_mode(&self, dark: bool) {
-        self.dark_mode.store(dark, Ordering::Relaxed);
-        self.save();
-    }
-
     pub fn ui_scale_pct(&self) -> u64 {
         self.ui_scale_pct.load(Ordering::Relaxed)
     }
@@ -196,11 +220,11 @@ impl Settings {
             return;
         };
         let body = format!(
-            "daemon_enabled={}\nattribution_enabled={}\ngpu_enabled={}\ndark_mode={}\nui_scale_pct={}\n",
+            "daemon_enabled={}\nattribution_enabled={}\ngpu_enabled={}\ntheme={}\nui_scale_pct={}\n",
             self.daemon_enabled.load(Ordering::Relaxed),
             self.attribution_enabled.load(Ordering::Relaxed),
             self.gpu_enabled.load(Ordering::Relaxed),
-            self.dark_mode.load(Ordering::Relaxed),
+            self.theme.load(Ordering::Relaxed),
             self.ui_scale_pct.load(Ordering::Relaxed)
         );
         if let Err(e) = std::fs::write(&path, body) {

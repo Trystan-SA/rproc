@@ -16,13 +16,13 @@ export component Settings inherits ScrollView {
     in property <int> ui-scale;
     in property <string> version;
     in property <string> build;
-    in property <bool> dark-mode;
+    in property <int> theme-index;
 
     callback set-refresh(int);
     callback daemon-toggled(bool);
     callback attribution-toggled(bool);
     callback gpu-toggled(bool);
-    callback theme-changed(bool);
+    callback theme-changed(int);
     callback set-ui-scale(int);
 
     VerticalLayout {
@@ -37,23 +37,29 @@ export component Settings inherits ScrollView {
                 spacing: 8px;
                 Text { text: "Appearance"; font-weight: 700; font-size: 15px; color: Theme.text; }
                 Text {
-                    text: "Switch between the light and dark color scheme. Your choice is saved across restarts.";
+                    text: "Choose a colour scheme. \"System\" follows your desktop preference.";
                     color: Theme.text-dim; font-size: 11px; wrap: word-wrap;
                 }
                 HorizontalLayout {
                     spacing: 6px;
                     alignment: start;
                     Toggle {
-                        text: "Light";
-                        min-width: 76px;
-                        checked: !root.dark-mode;
-                        toggled => { root.theme-changed(false); }
-                    }
-                    Toggle {
                         text: "Dark";
                         min-width: 76px;
-                        checked: root.dark-mode;
-                        toggled => { root.theme-changed(true); }
+                        checked: root.theme-index == 0;
+                        toggled => { root.theme-changed(0); }
+                    }
+                    Toggle {
+                        text: "Light";
+                        min-width: 76px;
+                        checked: root.theme-index == 1;
+                        toggled => { root.theme-changed(1); }
+                    }
+                    Toggle {
+                        text: "System";
+                        min-width: 86px;
+                        checked: root.theme-index == 2;
+                        toggled => { root.theme-changed(2); }
                     }
                 }
             }
