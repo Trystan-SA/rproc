@@ -12,7 +12,10 @@
 //! the resolved value is already known. Theme detection happens at startup
 //! and when the user toggles the setting there is no background polling.
 
+use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use slint::Color;
 
@@ -20,6 +23,12 @@ use slint::Color;
 mod tests;
 
 static DARK: AtomicBool = AtomicBool::new(true);
+
+/// Upper bound on a single detection probe. The probes normally answer in tens
+/// of milliseconds, but they run synchronously on the UI thread (at startup and
+/// on toggle); this caps the worst case so a wedged session bus can't freeze the
+/// UI indefinitely.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(1);
 
 // ---------------------------------------------------------------------------
 // Theme enum + global
@@ -71,19 +80,44 @@ pub fn detect_system_theme() -> Option<Theme> {
     detect_via_dbus().or_else(detect_via_gsettings)
 }
 
-fn detect_via_dbus() -> Option<Theme> {
-    let out = std::process::Command::new("dbus-send")
-        .args([
-            "--session",
-            "--print-reply",
-            "--dest=org.freedesktop.portal.Desktop",
-            "/org/freedesktop/portal/desktop",
-            "org.freedesktop.portal.Settings.Read",
-            "string:org.freedesktop.appearance",
-            "string:color-scheme",
-        ])
-        .output()
+/// Run `cmd` and collect its output, killing it if it outlives `PROBE_TIMEOUT`.
+/// Returns `None` on spawn failure or timeout. The detection replies are tiny
+/// (a single portal/gsettings value), so reading stdout after the child exits
+/// can't deadlock on a full pipe.
+fn output_bounded(mut cmd: Command) -> Option<Output> {
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
         .ok()?;
+    let deadline = Instant::now() + PROBE_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return child.wait_with_output().ok(),
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
+fn detect_via_dbus() -> Option<Theme> {
+    let mut cmd = Command::new("dbus-send");
+    cmd.args([
+        "--session",
+        "--print-reply",
+        "--dest=org.freedesktop.portal.Desktop",
+        "/org/freedesktop/portal/desktop",
+        "org.freedesktop.portal.Settings.Read",
+        "string:org.freedesktop.appearance",
+        "string:color-scheme",
+    ]);
+    let out = output_bounded(cmd)?;
     if !out.status.success() {
         return None;
     }
@@ -107,10 +141,9 @@ fn parse_dbus_color_scheme(text: &str) -> Option<Theme> {
 }
 
 fn detect_via_gsettings() -> Option<Theme> {
-    let out = std::process::Command::new("gsettings")
-        .args(["get", "org.gnome.desktop.interface", "color-scheme"])
-        .output()
-        .ok()?;
+    let mut cmd = Command::new("gsettings");
+    cmd.args(["get", "org.gnome.desktop.interface", "color-scheme"]);
+    let out = output_bounded(cmd)?;
     if !out.status.success() {
         return None;
     }
